@@ -269,6 +269,7 @@ exec "$SERVER_BIN" \
   --model "$MODEL_PATH" \
   --host "$HOST" \
   --port "$PORT" \
+  --sleep-idle-seconds 300 \
   --ctx-size "$CTX_SIZE" \
   -fa "$FA" \
   "${BATCH_ARGS[@]}" \
