@@ -2,31 +2,33 @@
 #
 # benchmark.sh — Measure llama-server tokens-per-second from the command line
 #
-# Stops any running llama-server, starts a fresh one (honoring the same
-# BACKEND / SPEC / NGL environment variables as start-server.sh), runs one
-# small warmup inference plus one measured inference, prints the performance
-# metrics, then shuts the server back down.
+# Runs one small warmup inference plus one measured inference against an
+# already-running llama-server, then prints the performance metrics.
+#
+# This script does NOT start or stop the server — start it yourself first with
+# ./start-server.sh (which prompts for a model) and leave it running. Whatever
+# model, backend, and speculative-decoding settings that server was launched
+# with are what gets benchmarked here.
 #
 # Usage:
+#   ./start-server.sh                        # in another terminal, pick a model
+#
 #   ./benchmark.sh                           # default prompt, 300 tokens
 #   ./benchmark.sh -n 500                    # generate 500 tokens instead
 #   ./benchmark.sh -p "Explain quicksort."   # custom prompt
 #   ./benchmark.sh -f mydoc.md               # read the prompt from a file
-#   SPEC=ngram-simple ./benchmark.sh         # benchmark a speculative mode
-#   BACKEND=cpu ./benchmark.sh               # benchmark the CPU build
+#   PORT=9090 ./benchmark.sh                 # server on a non-default port
 #
 # The metrics come from llama-server itself (the `timings` object in the
 # /completion response), so they are exact, not wall-clock estimates:
 #   - prefill tok/s   — prompt-processing speed
 #   - generation tok/s — the TPS number you usually care about
-#   - draft acceptance — only shown when SPEC is enabled
+#   - draft acceptance — only shown when the server has speculative decoding on
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${PORT:-8080}"
 BASE="http://127.0.0.1:${PORT}"
-LOG_FILE="$HOME/.local/share/llama.cpp/benchmark-server.log"
 
 # ── Options ──────────────────────────────────────────────────────────────
 N_PREDICT=300
@@ -41,42 +43,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Stop any running server, start a fresh one ───────────────────────────
-"$SCRIPT_DIR/stop-server.sh" >/dev/null 2>&1 || true
-
-echo "Starting llama-server (BACKEND=${BACKEND:-gpu}, SPEC=${SPEC:-off})..."
-echo "Server log: $LOG_FILE"
-"$SCRIPT_DIR/start-server.sh" >"$LOG_FILE" 2>&1 &
-SERVER_PID=$!
-
-# Always shut the server down on exit, even if the benchmark fails.
-cleanup() { "$SCRIPT_DIR/stop-server.sh" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
-
-# ── Wait for the model to finish loading ─────────────────────────────────
-echo -n "Loading model (this can take a few minutes on first load)"
-READY=0
-for _ in $(seq 1 180); do
-  if curl -fsS -m 2 "$BASE/health" 2>/dev/null | grep -q '"ok"'; then
-    READY=1
-    break
-  fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo ""
-    echo "ERROR: llama-server exited during startup. Last log lines:"
-    tail -20 "$LOG_FILE"
-    exit 1
-  fi
-  echo -n "."
-  sleep 2
-done
-echo ""
-if [[ "$READY" -ne 1 ]]; then
-  echo "ERROR: server never became healthy (see $LOG_FILE)."
+# ── Is anything listening? ───────────────────────────────────────────────
+# Deliberately not `curl -f` / not matching '"ok"': a server that has unloaded
+# the model after --sleep-idle-seconds answers /health with 503 but will wake up
+# on the first request, so it is perfectly benchmarkable. All we want to catch
+# here is "no server at all", which shows up as a connection failure.
+if ! curl -sS -m 5 "$BASE/health" >/dev/null 2>&1; then
+  echo "ERROR: nothing is answering at $BASE"
+  echo "       Start a server first:  ./start-server.sh"
   exit 1
 fi
 
 # ── Warmup + measured run (python3 for robust JSON handling) ─────────────
+echo "Benchmarking the server at $BASE"
 echo "Running warmup inference (16 tokens)..."
 echo "Running measured inference ($N_PREDICT tokens)..."
 python3 - "$BASE" "$N_PREDICT" "$PROMPT" <<'PYEOF'
@@ -118,4 +97,4 @@ print("\n".join(resp.get("content", "").strip().splitlines()[:6]))
 PYEOF
 
 echo ""
-echo "Done. Stopping server."
+echo "Done."
