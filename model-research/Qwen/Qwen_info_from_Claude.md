@@ -47,16 +47,18 @@ Real gotchas from llama.cpp Vulkan + Lunar Lake reports:
    the 32 GB and needing room for OS + KV cache, prefer **`IQ4_XS` (~19 GB)** and
    keep context modest (16-32K) to start.
 2. **Known k-quant crash on Arc 140V Xe2.** Open llama.cpp issues report K-quants
-   crashing on this iGPU. Workarounds: set **`OLLAMA_FLASH_ATTENTION=0`** (or
-   `--flash-attn off` in llama.cpp), and prefer **IQ-quants** over K-quants here.
+   crashing on this iGPU. Workaround: prefer **IQ-quants** over K-quants here.
    Test before committing.
+   > **Update (2026-08-02):** this research originally also recommended disabling
+   > flash-attention. That upstream bug has since been fixed — we now run with
+   > flash-attention **on** for every model, Qwen included.
 3. **Prompt processing:** use **`-b 256`** -- reported to significantly improve
    pp512 throughput for A3B models on the Vulkan backend.
 4. **Build with the Vulkan backend** (already in use) and confirm the iGPU is the
    offload target.
 
-**Recommended:** grab `Qwen3.6-35B-A3B` in **IQ4_XS**, run with flash-attn off
-and `-b 256`, modest context. Expect ~25-40 TPS -- well above the 10-TPS bar --
+**Recommended:** grab `Qwen3.6-35B-A3B` in **IQ4_XS**, run with `-b 256`,
+modest context. Expect ~25-40 TPS -- well above the 10-TPS bar --
 with the most capability extractable from this laptop.
 
 **Honesty caveat:** the TPS figures are bandwidth-math estimates; no published

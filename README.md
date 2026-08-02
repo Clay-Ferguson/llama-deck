@@ -208,41 +208,57 @@ Several model variants are supported:
 
 | Variant | Params | Quant | File Size | Context | Notes |
 |---------|--------|-------|-----------|---------|-------|
-| **Qwen3.6-35B-A3B** | ~3B active / 35B total (MoE) | UD-IQ4_XS | ~17.7 GB | 16384 | Near-flagship coder; MoE keeps generation fast on unified memory. Uses flash-attn off + `-b 256` on the Arc 140V iGPU. **Current default** |
+| **Qwen3.6-35B-A3B** | ~3B active / 35B total (MoE) | UD-IQ4_XS | ~17.7 GB | 16384 | Near-flagship coder; MoE keeps generation fast on unified memory. Uses `-b 256` on the Arc 140V iGPU. **Current default** |
 | **Gemma 4 26B-A4B** | 3.8B active / 25.2B total (MoE) | UD-IQ4_XS | ~13.4 GB | 8192 | High quality; MoE keeps generation fast despite the large size |
 | **Gemma 4 12B QAT** | 12B (dense) | UD-Q4_K_XL | ~6.7 GB | 16384 | Quantization-Aware Training; lower memory (~7 GB total), potentially faster, accuracy close to BF16 |
 | **Gemma 4 12B** | 12B (dense) | Q4_K_M | ~7.1 GB | 16384 | Strong quality |
 | **Gemma 4 E4B** | 4.5B effective (8B total) | Q4_K_M | ~5.0 GB | 16384 | Good balance |
 | **Gemma 4 E2B** | 2.3B effective (5.1B total) | Q4_K_M | ~3.1 GB | 16384 | Lightest, fastest |
 
-To switch variants, edit the model selection block near the top of **both**
-`download-model.sh` and `start-server.sh`. Comment out the active group and
-uncomment the other. In `start-server.sh` a block may also set `FA`
-(flash-attention on/off) and `BATCH` (prefill batch size); blocks that omit them
-fall back to the defaults near the top of the selection section (`FA="on"`,
-`BATCH=""`).
+You don't edit anything to switch between them. Both `./download-model.sh` and
+`./start-server.sh` open with the same menu, using the same numbering in each —
+so a given model is choice **6** in both places:
 
-```bash
-# Uncomment ONE group of settings below.
+```
+=== Select a Model ===
 
-# Gemma 4 26B-A4B (MoE): 3.8B active params (~13.4 GB)
-#MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"  # ← inactive
-#CTX_SIZE="8192"                                   # ← inactive
+  1) Gemma 4 E2B          2.3B effective params (~3.1 GB)
+  2) Gemma 4 E4B          4.5B effective params (~5.0 GB)
+  3) Gemma 4 12B          12B params, dense (~7.1 GB)
+  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)
+  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)
+  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)
 
-# Qwen3.6-35B-A3B (MoE): ~3B active params (~17.7 GB)
-MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"      # ← active
-CTX_SIZE="16384"                                  # ← active
-FA="off"                                          # ← active (Arc 140V workaround)
-BATCH="256"                                        # ← active (better A3B prefill)
+Model [6]:
 ```
 
-All model files can coexist on disk (they have different filenames), so you
-only need to run `./download-model.sh` once per variant. After switching, just
-restart `./start-server.sh`.
+Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-6
+exits with an error rather than starting. So switching models is just:
 
-> **Note:** Qwen3.6-35B-A3B uses `IQ4_XS` and flash-attn off because the Arc
-> 140V iGPU has a known crash with k-quants and with flash-attention enabled.
-> Context is kept at 16384 to fit comfortably in 32 GB RAM alongside the ~17.7 GB
+```bash
+./download-model.sh   # choose 5 → fetches Gemma 4 26B-A4B
+./start-server.sh     # choose 5 → serves it
+```
+
+All model files can coexist on disk (they have different filenames), so you only
+need `./download-model.sh` once per variant. From then on, switching is nothing
+more than restarting `./start-server.sh` and picking a different number.
+
+Because both scripts prompt, they need a real terminal — they can't be driven
+from cron or a pipe as-is.
+
+Per-model *settings* are not in the menu itself but in the `case` block just
+below it in `start-server.sh`. Each branch sets `CTX_SIZE`, and may override `FA`
+(flash-attention on/off) and `BATCH` (prefill batch size, `-b`); branches that
+omit those fall back to the defaults declared just above the menu (`FA="on"`,
+`BATCH=""`). At the moment Qwen3.6-35B-A3B is the only branch overriding
+anything — it sets `BATCH="256"` — and every model runs with flash-attention on.
+
+Adding a new model means editing the menu and `case` block in **both** scripts,
+keeping the numbering aligned between them (see `ai-prompts/`).
+
+> **Note:** Qwen3.6-35B-A3B uses `IQ4_XS` because the Arc 140V iGPU has a known
+> crash with k-quants. Context is kept at 16384 to fit comfortably in 32 GB RAM alongside the ~17.7 GB
 > weights, the OS, and KV-cache overhead.
 
 ## Vulkan Driver
@@ -332,11 +348,11 @@ LLAMA_TAG="${LLAMA_TAG:-b10229}"
 llama.cpp ships new releases constantly — often several a day. Without a pin,
 re-running `./setup.sh` on some unrelated Tuesday would silently move you onto a
 build you had never tested. That's a poor trade here specifically, because this
-project depends on version-sensitive behavior: flash-attention has to be *off*
-for Qwen on the Arc 140V iGPU, and the model has to be an `IQ4_XS` quant to
-dodge a known k-quant crash (see [Switching Models](#switching-models) and
-`model-research/`). Those are workarounds for upstream bugs, so an upstream
-change can move them in either direction.
+project depends on version-sensitive behavior: on the Arc 140V iGPU the model
+has to be an `IQ4_XS` quant to dodge a known k-quant crash (see
+[Switching Models](#switching-models) and `model-research/`). That is a
+workaround for an upstream bug, so an upstream change can move it in either
+direction.
 
 The pin also means **setting up a new machine reproduces the exact build you are
 running today**, rather than whatever is current whenever you get around to it.

@@ -1,11 +1,32 @@
-# Objective: Setup new Qwen Model
+# Objective: Add a new model to the menus
 
-Instructions to Coding Agent for refactoring our llamacpp setup.
+Instructions to a Coding Agent for adding another model option to this project.
 
-if you look in the folder named `llamacpp` in this project, you'll find the files related to how we install and run a local LLM that the MkBrowser can make use of for supporting its AI features. there's not too many files in that folder so please read all of them to get a full understanding of how things work. you'll notice that we've currently got `MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf` line uncommented in the scripts and so that's what gets run by the `start-server.sh` script.
+> Fill in the model you want before handing this over:
+> **MODEL:** `<name, e.g. Qwen3.6-35B-A3B>`  —  **REPO:** `<HuggingFace repo>`  —  **QUANT/FILE:** `<the .gguf filename>`
 
-Qwen has just released a new better version, which I've put information about in folder `llamacpp/model-research/Qwen`, so read both of those files in that folder, and I would like for you to switch our bash scripts over to where we know use the **Qwen3.6-35B-A3B** (MoE) mentioned. 
+this project is the set of bash scripts that install and run a local LLM, which MkBrowser talks to for its AI features. there aren't many files here, so please read all of them first to get a full understanding of how things work — `README.md`, `download-model.sh`, `start-server.sh`, and anything relevant in `model-research/`.
 
-be sure not to destroy our ability to revert back to the current model, because the way we should have our bash scripts set up, is that we should simply be able to comment out the old environment variables associated with the old model, and then define new environment variable setters that set the model values to where it will download the new model that we want. you can probably just follow the examples in the script because we're already doing this type of thing where we can easily switch from one model to another simply by uncommenting specific environment variable setters in our bash scripts.
+the important thing to understand before you change anything: models are **not** switched by commenting and uncommenting variables anymore. both `download-model.sh` and `start-server.sh` present an interactive numbered menu and then branch on the answer in a `case` block. the two menus have to stay in sync — the same model must be the same number in both scripts, because I pick the same number in each.
 
-so please update my scripts and then let me know what I need to run in order to get `start-server.sh` to begin serving up the new **Qwen3.6-35B-A3B** model.
+so adding a model is purely additive, and nothing existing should be removed or commented out. for each of the two scripts, add:
+
+1. one new `echo` line in the menu listing, matching the existing column alignment and the `~X.X GB` size hint style
+2. one new numbered branch in the `case` block, placed in the same order as the menu
+
+what each branch needs to set:
+
+- **`download-model.sh`** — `MODEL_REPO`, `MODEL_FILE`, and `MODEL_SIZE_HINT`
+- **`start-server.sh`** — `MODEL_FILE` and `CTX_SIZE`, plus optional `FA` (flash-attention on/off) and `BATCH` (prefill batch size, `-b`) if this model needs something other than the defaults declared just above the menu. only override those if there's a documented reason, and put the reason in a comment.
+
+follow the commenting style already in the existing branches: a short block explaining what the model is, why this particular quant was chosen, and any hardware-specific gotcha (the Arc 140V iGPU has a known k-quant crash, which is why the big MoE models here use `IQ4_XS` — check `model-research/` for anything similar affecting the new model).
+
+if the new model should become the one I get by pressing Enter, also update the default in **both** scripts — that's the `[6]` in the `read -rp "Model [6]: "` prompt and the `${MODEL_CHOICE:-6}` fallback in the `case` statement. otherwise leave the default alone.
+
+then update `README.md`:
+
+- add a row to the model table in the **Switching Models** section (params, quant, file size, context, notes)
+- update the menu listing quoted in that same section so it matches the real menu
+- move the **Current default** marker if the default changed
+
+finally, please let me know what I need to run to download and serve the new model, including which menu number to pick.

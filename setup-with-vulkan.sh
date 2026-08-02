@@ -26,9 +26,9 @@ set -euo pipefail
 # exact build.
 #
 # Pinning matters more for the GPU build than the CPU one. The Vulkan path here
-# leans on version-sensitive, hardware-specific workarounds: the Arc 140V iGPU
-# needs flash-attention off for Qwen and an IQ4_XS quant to avoid a known
-# k-quant crash (see README.md and model-research/). A new llama.cpp release can
+# leans on a version-sensitive, hardware-specific workaround: the Arc 140V iGPU
+# needs an IQ4_XS quant to avoid a known k-quant crash (see README.md and
+# model-research/). A new llama.cpp release can
 # change Vulkan shader behavior, and finding that out by surprise, mid-task, is
 # exactly what this pin prevents.
 #

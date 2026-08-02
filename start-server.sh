@@ -101,8 +101,8 @@ esac
 #
 # Defaults below apply to any block that does not set them. Per-model blocks may
 # override FA (flash-attention on/off) and BATCH (prefill batch size, -b):
-#   FA    — "on" works well for the Gemma builds; the Arc 140V iGPU needs "off"
-#           for Qwen (flash-attn + this iGPU is unstable; see model-research).
+#   FA    — "on" for every model here; flash-attention is stable on the Arc 140V
+#           iGPU for both the Gemma and Qwen builds.
 #   BATCH — empty uses the llama.cpp default; "256" improves A3B prefill on Vulkan.
 FA="on"
 BATCH=""
@@ -158,8 +158,8 @@ case "${MODEL_CHOICE:-6}" in
     # Mixture-of-Experts: all 35B params live in memory but only ~3B activate per
     # token, so generation stays fast on bandwidth-limited unified memory while
     # quality rivals a flagship coder. IQ4_XS avoids the known k-quant crash on the
-    # Arc 140V iGPU; flash-attn off + a small prefill batch are the recommended Arc
-    # workarounds (see model-research/Qwen).
+    # Arc 140V iGPU, and a small prefill batch is the recommended Arc workaround
+    # (see model-research/Qwen).
     MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
     CTX_SIZE="16384"
     BATCH="256"

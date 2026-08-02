@@ -15,9 +15,9 @@ set -euo pipefail
 # This is a fixed release tag, not "whatever is newest". Re-running this
 # script — today, or on a brand-new machine a year from now — reinstalls this
 # exact build. That reproducibility is the whole point: this project depends on
-# version-sensitive behavior (the Arc iGPU flash-attention and quant
-# workarounds described in README.md), so drifting onto an untested llama.cpp
-# release by accident is a real risk.
+# version-sensitive behavior (the Arc iGPU quant workaround described in
+# README.md), so drifting onto an untested llama.cpp release by accident is a
+# real risk.
 #
 # TO UPGRADE — this is a deliberate, manual act:
 #   1. Find the newest tag:   ./check-current-versions.sh --latest
