@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Terminal=keep
 #
 # status.sh — Report on the running llama-server, and optionally test it
 #

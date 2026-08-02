@@ -20,6 +20,37 @@
 #
 set -euo pipefail
 
+# ── Pinned llama.cpp version ─────────────────────────────────────────────
+# This is a fixed release tag, not "whatever is newest". Re-running this
+# script — today, or on a brand-new machine a year from now — reinstalls this
+# exact build.
+#
+# Pinning matters more for the GPU build than the CPU one. The Vulkan path here
+# leans on version-sensitive, hardware-specific workarounds: the Arc 140V iGPU
+# needs flash-attention off for Qwen and an IQ4_XS quant to avoid a known
+# k-quant crash (see README.md and model-research/). A new llama.cpp release can
+# change Vulkan shader behavior, and finding that out by surprise, mid-task, is
+# exactly what this pin prevents.
+#
+# TO UPGRADE — this is a deliberate, manual act:
+#   1. Find the newest tag:   ./check-current-versions.sh --latest
+#      (or browse https://github.com/ggml-org/llama.cpp/releases — tags look
+#      like "b10229")
+#   2. Try it without editing this file:
+#        LLAMA_TAG=b10310 ./setup-with-vulkan.sh
+#   3. Test it. This script's own GPU-detection step (Step 5 below) runs on
+#      every install, so you will see immediately if the new release stopped
+#      recognizing your GPU. Then: ./start-server.sh && ./status.sh
+#      and ./benchmark.sh to check tokens/sec did not regress.
+#   4. If it works, edit the line below to that tag to make it permanent.
+#
+# IF AN UPGRADE GOES BADLY: set the line below back to the previous tag and
+# re-run this script. It re-downloads that release from GitHub and overwrites
+# the install, putting you back exactly where you were. (Meanwhile the CPU
+# build is untouched and still available: BACKEND=cpu ./start-server.sh)
+LLAMA_TAG="${LLAMA_TAG:-b10229}"
+# ─────────────────────────────────────────────────────────────────────────
+
 BIN_DIR="$HOME/.local/bin"
 LIB_DIR="$HOME/.local/lib/llama.cpp-vulkan"     # separate from the CPU install
 MODELS_DIR="$HOME/.local/share/llama.cpp/models" # shared with the CPU install
@@ -29,7 +60,7 @@ TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf "$TEMP_DIR"; }
 trap cleanup EXIT
 
-echo "=== llama.cpp Vulkan Setup (side-by-side) ==="
+echo "=== llama.cpp Vulkan Setup (side-by-side, pinned version: $LLAMA_TAG) ==="
 echo ""
 
 # ── Step 1: Architecture check ───────────────────────────────────────────
@@ -75,10 +106,13 @@ fi
 echo ""
 
 # ── Step 3: Locate the Vulkan release asset ──────────────────────────────
-echo "Fetching latest llama.cpp release info from GitHub..."
-RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-TAG=$(echo "$RELEASE_JSON" | grep -oP '"tag_name":\s*"\K[^"]+')
-echo "Latest release: $TAG"
+echo "Fetching llama.cpp release $LLAMA_TAG from GitHub..."
+if ! RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$LLAMA_TAG"); then
+  echo "ERROR: no llama.cpp release found for tag '$LLAMA_TAG'."
+  echo "Check the pinned LLAMA_TAG near the top of this script."
+  echo "Available releases: https://github.com/ggml-org/llama.cpp/releases"
+  exit 1
+fi
 
 # Pattern: llama-b{N}-bin-ubuntu-vulkan-x64.tar.gz  (Vulkan build, not plain CPU)
 ASSET_URL=$(echo "$RELEASE_JSON" \
@@ -87,7 +121,8 @@ ASSET_URL=$(echo "$RELEASE_JSON" \
   | head -1)
 
 if [[ -z "$ASSET_URL" ]]; then
-  echo "ERROR: Could not find a Vulkan Ubuntu x64 build in the latest release."
+  echo "ERROR: release $LLAMA_TAG has no Vulkan Ubuntu x64 build."
+  echo "Not every release publishes every build; try a nearby tag."
   echo "Check releases manually: https://github.com/ggml-org/llama.cpp/releases"
   exit 1
 fi
@@ -124,6 +159,7 @@ ln -sf "$LIB_DIR/llama-server" "$BIN_DIR/$BIN_NAME"
 
 echo ""
 echo "=== Installation Complete ==="
+echo "  Version     → $LLAMA_TAG"
 echo "  Install dir → $LIB_DIR/"
 echo "  Binary      → $BIN_DIR/$BIN_NAME (symlink)"
 echo ""

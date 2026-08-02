@@ -143,7 +143,6 @@ BATCH=""
 # workarounds (see model-research/Qwen).
 MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
 CTX_SIZE="16384"
-FA="off"
 BATCH="256"
 # ─────────────────────────────────────────────────────────────────────────
 

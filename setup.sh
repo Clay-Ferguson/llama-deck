@@ -2,7 +2,7 @@
 #
 # setup.sh — Download and install prebuilt llama.cpp binaries
 #
-# Downloads the latest llama.cpp release for Ubuntu x64 from GitHub,
+# Downloads a specific, pinned llama.cpp release for Ubuntu x64 from GitHub,
 # extracts everything into ~/.local/lib/llama.cpp/, and creates symlinks
 # in ~/.local/bin/ for the main executables. Keeping binaries and shared
 # libraries in the same directory is required because llama-server loads
@@ -10,6 +10,28 @@
 # own directory.
 #
 set -euo pipefail
+
+# ── Pinned llama.cpp version ─────────────────────────────────────────────
+# This is a fixed release tag, not "whatever is newest". Re-running this
+# script — today, or on a brand-new machine a year from now — reinstalls this
+# exact build. That reproducibility is the whole point: this project depends on
+# version-sensitive behavior (the Arc iGPU flash-attention and quant
+# workarounds described in README.md), so drifting onto an untested llama.cpp
+# release by accident is a real risk.
+#
+# TO UPGRADE — this is a deliberate, manual act:
+#   1. Find the newest tag:   ./check-current-versions.sh --latest
+#      (or browse https://github.com/ggml-org/llama.cpp/releases — tags look
+#      like "b10229")
+#   2. Try it without editing this file:   LLAMA_TAG=b10310 ./setup.sh
+#   3. Test it:  ./start-server.sh && ./status.sh    and  ./benchmark.sh
+#   4. If it works, edit the line below to that tag to make it permanent.
+#
+# IF AN UPGRADE GOES BADLY: set the line below back to the previous tag and
+# re-run this script. It re-downloads that release from GitHub and overwrites
+# the install, putting you back exactly where you were.
+LLAMA_TAG="${LLAMA_TAG:-b10229}"
+# ─────────────────────────────────────────────────────────────────────────
 
 BIN_DIR="$HOME/.local/bin"
 LIB_DIR="$HOME/.local/lib/llama.cpp"
@@ -19,7 +41,7 @@ TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf "$TEMP_DIR"; }
 trap cleanup EXIT
 
-echo "=== llama.cpp Setup ==="
+echo "=== llama.cpp Setup (pinned version: $LLAMA_TAG) ==="
 echo ""
 
 # Ensure install directories exist
@@ -47,10 +69,13 @@ if [[ "$ARCH" != "x86_64" ]]; then
   exit 1
 fi
 
-echo "Fetching latest llama.cpp release info from GitHub..."
-RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-TAG=$(echo "$RELEASE_JSON" | grep -oP '"tag_name":\s*"\K[^"]+')
-echo "Latest release: $TAG"
+echo "Fetching llama.cpp release $LLAMA_TAG from GitHub..."
+if ! RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$LLAMA_TAG"); then
+  echo "ERROR: no llama.cpp release found for tag '$LLAMA_TAG'."
+  echo "Check the pinned LLAMA_TAG near the top of this script."
+  echo "Available releases: https://github.com/ggml-org/llama.cpp/releases"
+  exit 1
+fi
 
 # Find the Ubuntu x64 binary asset (tar.gz archive)
 # Pattern: llama-b{N}-bin-ubuntu-x64.tar.gz (plain CPU build, no vulkan/rocm/openvino)
@@ -97,6 +122,7 @@ fi
 
 echo ""
 echo "=== Installation Complete ==="
+echo "  Version      → $LLAMA_TAG"
 echo "  Install dir  → $LIB_DIR/"
 echo "  llama-server → $BIN_DIR/llama-server (symlink)"
 

@@ -11,7 +11,7 @@ to your specific hardware.
 ## Quick Start
 
 ```bash
-# 1. Install llama.cpp (downloads prebuilt binaries)
+# 1. Install llama.cpp (downloads prebuilt binaries, at a pinned version)
 ./setup.sh
 
 # 2. Download the model (see model selection in script; default: Qwen3.6-35B-A3B)
@@ -75,8 +75,9 @@ setting the **llama.cpp Base URL** to `http://localhost:9090/v1`.
 
 | Script | Purpose |
 |--------|---------|
-| `setup.sh` | Download and install the **CPU-only** llama.cpp binaries to `~/.local/bin/` |
+| `setup.sh` | Download and install the **CPU-only** llama.cpp binaries to `~/.local/bin/`, at a [pinned version](#pinned-llamacpp-version) |
 | `setup-with-vulkan.sh` | Download and install a **Vulkan (GPU)** llama.cpp build side-by-side (see [Vulkan Driver](#vulkan-driver)) |
+| `check-current-versions.sh` | Report which llama.cpp version each build is actually running, and whether it matches the pin (see [Pinned llama.cpp Version](#pinned-llamacpp-version)) |
 | `download-model.sh` | Download a quantized GGUF model to `~/.local/share/llama.cpp/models/` |
 | `start-server.sh` | Launch the server on `localhost:8080`; selects CPU or GPU via the `BACKEND` env var |
 | `status.sh` | Report whether the server is up, what it's serving, and run a test inference (see [Verifying the Server](#verifying-the-server)) |
@@ -317,6 +318,92 @@ device was found, updating your graphics/Mesa packages is the first thing to
 try. The installer checks for the Vulkan loader (`libvulkan.so.1`) and an
 appropriate driver up front and tells you what to install if anything is
 missing. If GPU mode ever misbehaves, the CPU build is always one command away.
+
+## Pinned llama.cpp Version
+
+The setup scripts install **one specific llama.cpp release**, not whichever one
+happens to be newest. The version lives in a single line near the top of each
+script:
+
+```bash
+LLAMA_TAG="${LLAMA_TAG:-b10229}"
+```
+
+llama.cpp ships new releases constantly — often several a day. Without a pin,
+re-running `./setup.sh` on some unrelated Tuesday would silently move you onto a
+build you had never tested. That's a poor trade here specifically, because this
+project depends on version-sensitive behavior: flash-attention has to be *off*
+for Qwen on the Arc 140V iGPU, and the model has to be an `IQ4_XS` quant to
+dodge a known k-quant crash (see [Switching Models](#switching-models) and
+`model-research/`). Those are workarounds for upstream bugs, so an upstream
+change can move them in either direction.
+
+The pin also means **setting up a new machine reproduces the exact build you are
+running today**, rather than whatever is current whenever you get around to it.
+
+The CPU and Vulkan builds are pinned independently, since they are separate
+installs — though keeping the two tags in step is usually what you want.
+
+### Seeing what you actually have
+
+```bash
+./check-current-versions.sh            # installed versions vs. the pinned ones
+./check-current-versions.sh --latest   # also ask GitHub what the newest release is
+```
+
+```
+── Vulkan build
+   install dir: /home/you/.local/lib/llama.cpp-vulkan
+   pinned in setup-with-vulkan.sh: b10229
+   installed:   b10229  ✓ matches the pin
+   size:        181M
+```
+
+This is read-only — it installs and changes nothing. It's the quickest way to
+catch the case where you trialled a version with a one-off `LLAMA_TAG=` override
+and forgot to update the pin afterwards, leaving disk and script disagreeing.
+
+### Upgrading
+
+1. **Find the newest tag** — `./check-current-versions.sh --latest`, or browse
+   <https://github.com/ggml-org/llama.cpp/releases>. Tags look like `b10229`.
+2. **Try it without committing.** Override the pin for a single run:
+   ```bash
+   LLAMA_TAG=b10310 ./setup-with-vulkan.sh
+   ```
+3. **Test it before trusting it:**
+   ```bash
+   ./start-server.sh     # does it load without crashing?
+   ./status.sh           # healthy, serving the right model?
+   ./benchmark.sh        # did tokens/sec regress?
+   ```
+   `setup-with-vulkan.sh` also re-runs its GPU-detection check on every install,
+   so you'll see immediately if a new release stopped recognizing your GPU.
+4. **Happy?** Edit `LLAMA_TAG` in the script to the new tag to make it permanent.
+
+### If an upgrade goes badly
+
+Set `LLAMA_TAG` back to the previous tag and re-run the setup script. It
+re-downloads that release and overwrites the install, putting you back exactly
+where you were.
+
+This does mean a rollback re-downloads (~100–200 MB) rather than restoring
+something kept on disk. That's a deliberate trade: keeping every old build
+around would complicate the install scripts considerably to save one short
+download on a rare event. **Write the tag you are on somewhere before you
+upgrade** — or just check `git log` on this repo, since the pin is committed
+here — so you know what to set it back to.
+
+Nothing about upgrading or rolling back touches your **models**. Program
+binaries and model files live in separate trees:
+
+```
+~/.local/share/llama.cpp/models/    ← your .gguf files (many GB each)
+~/.local/lib/llama.cpp*             ← llama.cpp program binaries only
+```
+
+The setup scripts never write to `~/.local/share/`, so reinstalling llama.cpp at
+any version — as many times as you like — never costs you a model download.
 
 ## Customization
 
