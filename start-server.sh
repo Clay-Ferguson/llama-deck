@@ -12,10 +12,12 @@
 #   ./start-server.sh off          # Start with reasoning off
 #   ./start-server.sh on --port 9090  # reasoning on + override port
 #
-# Backend (CPU vs GPU) is chosen via the BACKEND env var (default "cpu"):
-#   BACKEND=gpu ./start-server.sh        # run on the Intel Arc iGPU (Vulkan)
-#   BACKEND=gpu ./start-server.sh on     # GPU + reasoning on
-# (GPU mode requires ./setup-with-vulkan.sh to have been run first.)
+# Backend (CPU vs GPU) is chosen via the BACKEND env var (default "gpu"):
+#   ./start-server.sh                    # run on the Intel Arc iGPU (Vulkan)
+#   BACKEND=cpu ./start-server.sh        # run on the CPU cores instead
+#   BACKEND=cpu ./start-server.sh on     # CPU + reasoning on
+# (The default GPU mode requires ./setup-with-vulkan.sh to have been run first;
+#  ./setup.sh alone installs only the CPU build.)
 #
 set -euo pipefail
 
@@ -36,11 +38,12 @@ MODELS_DIR="$HOME/.local/share/llama.cpp/models"
 # ── Backend Selection: CPU vs GPU (Vulkan / Intel Arc) ───────────────────
 # Choose which llama.cpp build to launch:
 #   "cpu" → the CPU-only build installed by ./setup.sh
-#   "gpu" → the default Vulkan build installed by ./setup-with-vulkan.sh, which
-#           offloads the model to the Intel Arc iGPU (adds --n-gpu-layers).
+#   "gpu" → the Vulkan build installed by ./setup-with-vulkan.sh, which offloads
+#           the model to the Intel Arc iGPU (adds --n-gpu-layers). This is the
+#           default, so ./setup-with-vulkan.sh must have been run.
 # The two builds live in separate directories with separate binaries, so the
-# CPU setup is never disturbed. Pick one by editing BACKEND below, or override
-# from the environment without editing this file:  BACKEND=gpu ./start-server.sh
+# CPU setup is never disturbed. Change the default by editing BACKEND below, or
+# override per-run without editing this file:  BACKEND=cpu ./start-server.sh
 BACKEND="${BACKEND:-gpu}"
 
 # Layers to offload to the GPU in "gpu" mode. 99 = offload all layers.
@@ -101,11 +104,20 @@ esac
 #
 # Defaults below apply to any block that does not set them. Per-model blocks may
 # override FA (flash-attention on/off) and BATCH (prefill batch size, -b):
-#   FA    — "on" for every model here; flash-attention is stable on the Arc 140V
-#           iGPU for both the Gemma and Qwen builds.
+#   FA    — flash-attention on/off; stable on the Arc 140V iGPU for both the
+#           Gemma and Qwen builds. It is an EXACT algorithm, not an
+#           approximation: it tiles attention and uses an online softmax to
+#           avoid materializing the N×N score matrix, giving the same result as
+#           the naive path up to floating-point rounding. So it costs no model
+#           quality, and it is the prerequisite for KV-cache quantization
+#           (--cache-type-k/v). Its benefit is invisible at short context and
+#           grows with N, so only a long prompt can measure it:
+#             FA=off ./start-server.sh   # then ./benchmark.sh -f README.md -n 100
 #   BATCH — empty uses the llama.cpp default; "256" improves A3B prefill on Vulkan.
-FA="on"
-BATCH=""
+# Both are env-overridable for benchmark sweeps; a per-model block below may
+# still override either one for that specific model.
+FA="${FA:-on}"
+BATCH="${BATCH:-}"
 
 echo "=== Select a Model ==="
 echo ""
@@ -247,6 +259,36 @@ fi
 # Ensure shared libraries are findable
 export LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# ── Thread Tuning ────────────────────────────────────────────────────────
+# For the Intel Core Ultra 9 288V (Lunar Lake): 8 cores, no hyperthreading =
+# 4 fast P-cores + 4 low-power E-cores.
+#   --threads 4        Token generation is memory-bandwidth-bound, and the 4
+#                      P-cores nearly saturate the LPDDR5X bandwidth on their
+#                      own. Including the slower E-cores tends to gate each
+#                      token (every token waits on the slowest thread) and
+#                      hurts laptop responsiveness, so we pin generation to 4.
+#   --threads-batch 8  Prompt ingestion (prefill) is compute-bound rather than
+#                      bandwidth-bound, so it benefits from all 8 cores.
+#
+# Both are overridable from the environment so they can be swept against
+# ./benchmark.sh without editing this file:
+#   THREADS=1 ./start-server.sh
+#   THREADS=2 THREADS_BATCH=8 ./start-server.sh
+#
+# WHY FEWER THREADS MAY BE FASTER IN GPU MODE: the defaults above are reasoned
+# entirely as *CPU inference* tuning, and they are right for BACKEND=cpu. But
+# with BACKEND=gpu and -ngl 99 the whole model lives on the Arc iGPU, and those
+# CPU threads spend most of their time spin-waiting on GPU completion. On this
+# machine that is not free:
+#   - The CPU cores and the iGPU share one package power budget, so cores
+#     busy-waiting burn watts that would otherwise clock the GPU higher.
+#   - They share the same LPDDR5X bus, so spinning threads add memory traffic
+#     alongside the GPU that is already trying to saturate it.
+# So in GPU mode, fewer generation threads is often *faster*. Worth measuring.
+THREADS="${THREADS:-4}"
+THREADS_BATCH="${THREADS_BATCH:-8}"
+# ─────────────────────────────────────────────────────────────────────────
+
 echo "=== Starting llama.cpp Server ==="
 echo ""
 if [[ "$BACKEND" == "gpu" ]]; then
@@ -258,6 +300,7 @@ echo "  Model:        $MODEL_FILE"
 echo "  Context size: $CTX_SIZE"
 echo "  Flash-attn:   $FA"
 echo "  Prefill batch: ${BATCH:-default}"
+echo "  Threads:      $THREADS gen / $THREADS_BATCH batch"
 echo "  Spec decoding: $SPEC"
 echo "  Endpoint:     http://${HOST}:${PORT}"
 echo "  API (OpenAI): http://${HOST}:${PORT}/v1"
@@ -275,16 +318,6 @@ echo ""
 # socket's owning PID and only falls back to this file. See server-lib.sh.
 echo $$ > "$LLAMA_PID_FILE"
 
-# Thread tuning for the Intel Core Ultra 9 288V (Lunar Lake): 8 cores, no
-# hyperthreading = 4 fast P-cores + 4 low-power E-cores.
-#   --threads 4        Token generation is memory-bandwidth-bound, and the 4
-#                      P-cores nearly saturate the LPDDR5X bandwidth on their
-#                      own. Including the slower E-cores tends to gate each
-#                      token (every token waits on the slowest thread) and
-#                      hurts laptop responsiveness, so we pin generation to 4.
-#   --threads-batch 8  Prompt ingestion (prefill) is compute-bound rather than
-#                      bandwidth-bound, so it benefits from all 8 cores.
-#
 # Optional prefill batch size (-b); empty BATCH leaves the llama.cpp default.
 BATCH_ARGS=()
 [[ -n "$BATCH" ]] && BATCH_ARGS=(-b "$BATCH")
@@ -297,8 +330,8 @@ exec "$SERVER_BIN" \
   --ctx-size "$CTX_SIZE" \
   -fa "$FA" \
   "${BATCH_ARGS[@]}" \
-  --threads 4 \
-  --threads-batch 8 \
+  --threads "$THREADS" \
+  --threads-batch "$THREADS_BATCH" \
   "${GPU_ARGS[@]}" \
   "${SPEC_ARGS[@]}" \
   --reasoning "$REASONING" \

@@ -12,7 +12,8 @@ to your specific hardware.
 
 ```bash
 # 1. Install llama.cpp (downloads prebuilt binaries, at a pinned version)
-./setup.sh
+./setup.sh                # CPU build
+./setup-with-vulkan.sh    # GPU build — required, since GPU is the default backend
 
 # 2. Download the model (see model selection in script; default: Qwen3.6-35B-A3B)
 ./download-model.sh
@@ -24,6 +25,11 @@ to your specific hardware.
 #    (a large model takes ~2 min to load; until then this reports LOADING)
 ./status.sh
 ```
+
+`start-server.sh` defaults to the **GPU (Vulkan)** backend, so step 1 needs
+`./setup-with-vulkan.sh` — with only `./setup.sh` installed it will stop with
+"Vulkan build not found." To run on the CPU build instead, set the backend
+explicitly: `BACKEND=cpu ./start-server.sh` (see [Vulkan Driver](#vulkan-driver)).
 
 Then in MkBrowser **Settings → AI**:
 - Select the **llama.cpp** model
@@ -79,7 +85,7 @@ setting the **llama.cpp Base URL** to `http://localhost:9090/v1`.
 | `setup-with-vulkan.sh` | Download and install a **Vulkan (GPU)** llama.cpp build side-by-side (see [Vulkan Driver](#vulkan-driver)) |
 | `check-current-versions.sh` | Report which llama.cpp version each build is actually running, and whether it matches the pin (see [Pinned llama.cpp Version](#pinned-llamacpp-version)) |
 | `download-model.sh` | Download a quantized GGUF model to `~/.local/share/llama.cpp/models/` |
-| `start-server.sh` | Launch the server on `localhost:8080`; selects CPU or GPU via the `BACKEND` env var |
+| `start-server.sh` | Launch the server on `localhost:8080`; selects CPU or GPU via the `BACKEND` env var (default: `gpu`) |
 | `status.sh` | Report whether the server is up, what it's serving, and run a test inference (see [Verifying the Server](#verifying-the-server)) |
 | `stop-server.sh` | Stop the running server |
 | `server-lib.sh` | Shared helper *sourced* by the scripts above (not run directly) — locates and verifies the server process |
@@ -263,12 +269,13 @@ keeping the numbering aligned between them (see `ai-prompts/`).
 
 ## Vulkan Driver
 
-By default this project runs entirely on the **CPU**. `setup.sh` installs the
-plain CPU build of llama.cpp, and `start-server.sh` runs inference across your
-processor cores. That works everywhere, but it leaves any GPU in the machine
-idle. The optional `setup-with-vulkan.sh` script installs a second,
+This project ships **two** llama.cpp builds and runs the **GPU** one by default.
+`setup.sh` installs the plain CPU build, which works everywhere but leaves any
+GPU in the machine idle. `setup-with-vulkan.sh` installs a second,
 **GPU-accelerated** build that offloads the model to your graphics hardware via
-[Vulkan](https://www.vulkan.org/).
+[Vulkan](https://www.vulkan.org/) — and since `start-server.sh` defaults to
+`BACKEND=gpu`, that second install is the one it expects to find. The CPU build
+remains the universal fallback, one environment variable away.
 
 **What is Vulkan, and why use it here?** Vulkan is a cross-vendor, open standard
 for talking to GPUs — both for graphics and for general compute. For local LLMs
@@ -287,12 +294,13 @@ non-destructive. `setup.sh` installs the CPU build into
 a *separate* directory, `~/.local/lib/llama.cpp-vulkan/`, under a separate
 binary name. Because nothing overlaps, installing or removing the Vulkan build
 never disturbs the working CPU build — to remove GPU support you can simply
-delete the `-vulkan` directory. You choose which one runs at launch time with an
-environment variable:
+delete the `-vulkan` directory (and set `BACKEND` in `start-server.sh` back to
+`cpu`, since `gpu` is what it defaults to). You choose which one runs at launch
+time with an environment variable:
 
 ```bash
+./start-server.sh               # Vulkan build, offloads all layers to the GPU (default)
 BACKEND=cpu ./start-server.sh   # CPU build (the universal fallback)
-BACKEND=gpu ./start-server.sh   # Vulkan build, offloads all layers to the GPU
 ```
 
 In `gpu` mode the server adds `--n-gpu-layers 99`, which offloads the entire
