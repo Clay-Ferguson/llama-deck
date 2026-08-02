@@ -421,6 +421,10 @@ binaries and model files live in separate trees:
 The setup scripts never write to `~/.local/share/`, so reinstalling llama.cpp at
 any version — as many times as you like — never costs you a model download.
 
+## Backing Up Models
+Normally on Linux your models will be stored under folder `~/.local/share/llama.cpp/models/` 
+so if you want to backup all your models this is the folder to backup.
+
 ## Customization
 
 ### Server parameters
