@@ -11,48 +11,73 @@ MODELS_DIR="$HOME/.local/share/llama.cpp/models"
 mkdir -p "$MODELS_DIR"
 
 # ── Model Selection ──────────────────────────────────────────────────────
-# Uncomment ONE group of settings below.
+# Pick ONE model from the menu below.
 # All model files can coexist on disk — download each variant once.
 
-# Gemma 4 E2B: 2.3B effective params (5.1B total with embeddings)
-#MODEL_REPO="unsloth/gemma-4-E2B-it-GGUF"
-#MODEL_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
-#MODEL_SIZE_HINT="~3.1 GB"
+echo "=== Select a Model to Download ==="
+echo ""
+echo "  1) Gemma 4 E2B          2.3B effective params (~3.1 GB)"
+echo "  2) Gemma 4 E4B          4.5B effective params (~5.0 GB)"
+echo "  3) Gemma 4 12B          12B params, dense (~7.1 GB)"
+echo "  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)"
+echo "  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)"
+echo "  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)"
+echo ""
+read -rp "Model [6]: " MODEL_CHOICE
+echo ""
 
-# Gemma 4 E4B: 4.5B effective params (8B total with embeddings)
-#MODEL_REPO="unsloth/gemma-4-E4B-it-GGUF"
-#MODEL_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
-#MODEL_SIZE_HINT="~5.0 GB"
-
-# Gemma 4 12B (dense): 12B params
-#MODEL_REPO="unsloth/gemma-4-12b-it-GGUF"
-#MODEL_FILE="gemma-4-12b-it-Q4_K_M.gguf"
-#MODEL_SIZE_HINT="~7.1 GB"
-
-# Gemma 4 12B QAT (dense, Quantization-Aware Training): 12B params
-# Lower memory footprint (~7 GB total) and potentially faster than the
-# standard Q4_K_M 12B build, with accuracy close to the original BF16.
-#MODEL_REPO="unsloth/gemma-4-12b-it-qat-GGUF"
-#MODEL_FILE="gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
-#MODEL_SIZE_HINT="~6.7 GB"
-
-# Gemma 4 26B-A4B (MoE): 3.8B active params (25.2B total)
-# A Mixture-of-Experts model: holds all 25.2B params in memory (~13.4 GB) but
-# only activates ~3.8B per token, so generation stays fast while quality is
-# high. A strong fit for unified-memory machines with plenty of RAM.
-#MODEL_REPO="unsloth/gemma-4-26B-A4B-it-GGUF"
-#MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"
-#MODEL_SIZE_HINT="~13.4 GB"
-
-# Qwen3.6-35B-A3B (MoE): ~3B active params (35B total)
-# A Mixture-of-Experts model: all 35B params live in memory (~17.7 GB) but only
-# ~3B activate per token, so generation stays fast on bandwidth-limited unified
-# memory while quality rivals a flagship coder. IQ4_XS is preferred on the Arc
-# 140V iGPU to avoid the known k-quant crash (see model-research/Qwen).
-# IMPORTANT: This model scores *much* better on benchmarks than any of the above models.
-MODEL_REPO="unsloth/Qwen3.6-35B-A3B-GGUF"
-MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
-MODEL_SIZE_HINT="~17.7 GB"
+case "${MODEL_CHOICE:-6}" in
+  1)
+    # Gemma 4 E2B: 2.3B effective params (5.1B total with embeddings)
+    MODEL_REPO="unsloth/gemma-4-E2B-it-GGUF"
+    MODEL_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
+    MODEL_SIZE_HINT="~3.1 GB"
+    ;;
+  2)
+    # Gemma 4 E4B: 4.5B effective params (8B total with embeddings)
+    MODEL_REPO="unsloth/gemma-4-E4B-it-GGUF"
+    MODEL_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
+    MODEL_SIZE_HINT="~5.0 GB"
+    ;;
+  3)
+    # Gemma 4 12B (dense): 12B params
+    MODEL_REPO="unsloth/gemma-4-12b-it-GGUF"
+    MODEL_FILE="gemma-4-12b-it-Q4_K_M.gguf"
+    MODEL_SIZE_HINT="~7.1 GB"
+    ;;
+  4)
+    # Gemma 4 12B QAT (dense, Quantization-Aware Training): 12B params
+    # Lower memory footprint (~7 GB total) and potentially faster than the
+    # standard Q4_K_M 12B build, with accuracy close to the original BF16.
+    MODEL_REPO="unsloth/gemma-4-12b-it-qat-GGUF"
+    MODEL_FILE="gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
+    MODEL_SIZE_HINT="~6.7 GB"
+    ;;
+  5)
+    # Gemma 4 26B-A4B (MoE): 3.8B active params (25.2B total)
+    # A Mixture-of-Experts model: holds all 25.2B params in memory (~13.4 GB) but
+    # only activates ~3.8B per token, so generation stays fast while quality is
+    # high. A strong fit for unified-memory machines with plenty of RAM.
+    MODEL_REPO="unsloth/gemma-4-26B-A4B-it-GGUF"
+    MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"
+    MODEL_SIZE_HINT="~13.4 GB"
+    ;;
+  6)
+    # Qwen3.6-35B-A3B (MoE): ~3B active params (35B total)
+    # A Mixture-of-Experts model: all 35B params live in memory (~17.7 GB) but only
+    # ~3B activate per token, so generation stays fast on bandwidth-limited unified
+    # memory while quality rivals a flagship coder. IQ4_XS is preferred on the Arc
+    # 140V iGPU to avoid the known k-quant crash (see model-research/Qwen).
+    # IMPORTANT: This model scores *much* better on benchmarks than any of the above models.
+    MODEL_REPO="unsloth/Qwen3.6-35B-A3B-GGUF"
+    MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
+    MODEL_SIZE_HINT="~17.7 GB"
+    ;;
+  *)
+    echo "ERROR: Invalid selection '$MODEL_CHOICE'."
+    exit 1
+    ;;
+esac
 # ─────────────────────────────────────────────────────────────────────────
 
 MODEL_URL="https://huggingface.co/${MODEL_REPO}/resolve/main/${MODEL_FILE}"

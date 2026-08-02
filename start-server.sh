@@ -97,7 +97,7 @@ esac
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── Model Selection ──────────────────────────────────────────────────────
-# Uncomment ONE group of settings below.
+# Pick ONE model from the menu below.
 #
 # Defaults below apply to any block that does not set them. Per-model blocks may
 # override FA (flash-attention on/off) and BATCH (prefill batch size, -b):
@@ -107,43 +107,68 @@ esac
 FA="on"
 BATCH=""
 
-# Gemma 4 E2B: 2.3B effective params (~3.1 GB)
-#MODEL_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
-#CTX_SIZE="16384"
+echo "=== Select a Model ==="
+echo ""
+echo "  1) Gemma 4 E2B          2.3B effective params (~3.1 GB)"
+echo "  2) Gemma 4 E4B          4.5B effective params (~5.0 GB)"
+echo "  3) Gemma 4 12B          12B params, dense (~7.1 GB)"
+echo "  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)"
+echo "  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)"
+echo "  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)"
+echo ""
+read -rp "Model [6]: " MODEL_CHOICE
+echo ""
 
-# Gemma 4 E4B: 4.5B effective params (~5.0 GB)
-#MODEL_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
-#CTX_SIZE="16384"
-
-# Gemma 4 12B (dense): 12B params (~7.1 GB)
-#MODEL_FILE="gemma-4-12b-it-Q4_K_M.gguf"
-#CTX_SIZE="16384"
-
-# Gemma 4 12B QAT (dense, Quantization-Aware Training): 12B params (~6.7 GB)
-# Lower memory footprint (~7 GB total) and potentially faster than the
-# standard Q4_K_M 12B build, with accuracy close to the original BF16.
-# In other words, this QAT model is "smarter" (better answers/inference) than 
-# the non-QAT model above, but runs in about the same memory.
-#MODEL_FILE="gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
-#CTX_SIZE="16384"
-
-# Gemma 4 26B-A4B (MoE): 3.8B active params (~13.4 GB)
-# Mixture-of-Experts: all 25.2B params live in memory but only ~3.8B activate
-# per token, so generation stays fast while quality is higher than the 12B.
-# Context kept at 8192 to leave memory headroom alongside the larger weights,
-# although there is reason to believe 16384 will alwo work on my hardware.
-#MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"
-#CTX_SIZE="8192"
-
-# Qwen3.6-35B-A3B (MoE): ~3B active params (~17.7 GB)
-# Mixture-of-Experts: all 35B params live in memory but only ~3B activate per
-# token, so generation stays fast on bandwidth-limited unified memory while
-# quality rivals a flagship coder. IQ4_XS avoids the known k-quant crash on the
-# Arc 140V iGPU; flash-attn off + a small prefill batch are the recommended Arc
-# workarounds (see model-research/Qwen).
-MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
-CTX_SIZE="16384"
-BATCH="256"
+case "${MODEL_CHOICE:-6}" in
+  1)
+    # Gemma 4 E2B: 2.3B effective params (~3.1 GB)
+    MODEL_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
+    CTX_SIZE="16384"
+    ;;
+  2)
+    # Gemma 4 E4B: 4.5B effective params (~5.0 GB)
+    MODEL_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
+    CTX_SIZE="16384"
+    ;;
+  3)
+    # Gemma 4 12B (dense): 12B params (~7.1 GB)
+    MODEL_FILE="gemma-4-12b-it-Q4_K_M.gguf"
+    CTX_SIZE="16384"
+    ;;
+  4)
+    # Gemma 4 12B QAT (dense, Quantization-Aware Training): 12B params (~6.7 GB)
+    # Lower memory footprint (~7 GB total) and potentially faster than the
+    # standard Q4_K_M 12B build, with accuracy close to the original BF16.
+    # In other words, this QAT model is "smarter" (better answers/inference) than
+    # the non-QAT model above, but runs in about the same memory.
+    MODEL_FILE="gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
+    CTX_SIZE="16384"
+    ;;
+  5)
+    # Gemma 4 26B-A4B (MoE): 3.8B active params (~13.4 GB)
+    # Mixture-of-Experts: all 25.2B params live in memory but only ~3.8B activate
+    # per token, so generation stays fast while quality is higher than the 12B.
+    # Context kept at 8192 to leave memory headroom alongside the larger weights,
+    # although there is reason to believe 16384 will alwo work on my hardware.
+    MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"
+    CTX_SIZE="8192"
+    ;;
+  6)
+    # Qwen3.6-35B-A3B (MoE): ~3B active params (~17.7 GB)
+    # Mixture-of-Experts: all 35B params live in memory but only ~3B activate per
+    # token, so generation stays fast on bandwidth-limited unified memory while
+    # quality rivals a flagship coder. IQ4_XS avoids the known k-quant crash on the
+    # Arc 140V iGPU; flash-attn off + a small prefill batch are the recommended Arc
+    # workarounds (see model-research/Qwen).
+    MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
+    CTX_SIZE="16384"
+    BATCH="256"
+    ;;
+  *)
+    echo "ERROR: Invalid selection '$MODEL_CHOICE'."
+    exit 1
+    ;;
+esac
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── Server Configuration ─────────────────────────────────────────────────
