@@ -22,6 +22,7 @@ echo "  3) Gemma 4 12B          12B params, dense (~7.1 GB)"
 echo "  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)"
 echo "  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)"
 echo "  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)"
+echo "  7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -72,6 +73,22 @@ case "${MODEL_CHOICE:-6}" in
     MODEL_REPO="unsloth/Qwen3.6-35B-A3B-GGUF"
     MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
     MODEL_SIZE_HINT="~17.7 GB"
+    ;;
+  7)
+    # Qwen3.6-35B-A3B Uncensored (HauhauCS "Aggressive"): ~3B active params (35B total)
+    # A community fine-tune of the same Qwen3.6-35B-A3B MoE as option 6, with the
+    # refusal behavior stripped out — the model card reports 0 refusals across its
+    # 465-prompt test set. Architecture is unchanged (40 layers, 256 experts / 8
+    # routed per token, 262K native context), so it runs with the same speed and
+    # memory profile as option 6; only the alignment differs.
+    # IQ4_XS again, for the same reason: it dodges the known k-quant crash on the
+    # Arc 140V iGPU (see model-research/Qwen). This repo also publishes custom
+    # "K_P" quants, but those are k-quants and so are exactly what to avoid here.
+    # Slightly larger than option 6 (~19 GB vs ~17.7 GB) because this is a plain
+    # IQ4_XS rather than an Unsloth "UD" dynamic quant.
+    MODEL_REPO="HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive"
+    MODEL_FILE="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
+    MODEL_SIZE_HINT="~19.0 GB"
     ;;
   *)
     echo "ERROR: Invalid selection '$MODEL_CHOICE'."

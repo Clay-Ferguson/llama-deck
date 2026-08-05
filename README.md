@@ -215,6 +215,7 @@ Several model variants are supported:
 | Variant | Params | Quant | File Size | Context | Notes |
 |---------|--------|-------|-----------|---------|-------|
 | **Qwen3.6-35B-A3B** | ~3B active / 35B total (MoE) | UD-IQ4_XS | ~17.7 GB | 16384 | Near-flagship coder; MoE keeps generation fast on unified memory. Uses `-b 256` on the Arc 140V iGPU. **Current default** |
+| **Qwen3.6-35B-A3B Uncensored** | ~3B active / 35B total (MoE) | IQ4_XS | ~19.0 GB | 16384 | [HauhauCS "Aggressive"](https://huggingface.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive) fine-tune of the row above with refusals removed; same architecture, same `-b 256`. Model card suggests `--jinja` for its chat template |
 | **Gemma 4 26B-A4B** | 3.8B active / 25.2B total (MoE) | UD-IQ4_XS | ~13.4 GB | 8192 | High quality; MoE keeps generation fast despite the large size |
 | **Gemma 4 12B QAT** | 12B (dense) | UD-Q4_K_XL | ~6.7 GB | 16384 | Quantization-Aware Training; lower memory (~7 GB total), potentially faster, accuracy close to BF16 |
 | **Gemma 4 12B** | 12B (dense) | Q4_K_M | ~7.1 GB | 16384 | Strong quality |
@@ -234,11 +235,12 @@ so a given model is choice **6** in both places:
   4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)
   5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)
   6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)
+  7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)
 
 Model [6]:
 ```
 
-Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-6
+Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-7
 exits with an error rather than starting. So switching models is just:
 
 ```bash
@@ -257,15 +259,18 @@ Per-model *settings* are not in the menu itself but in the `case` block just
 below it in `start-server.sh`. Each branch sets `CTX_SIZE`, and may override `FA`
 (flash-attention on/off) and `BATCH` (prefill batch size, `-b`); branches that
 omit those fall back to the defaults declared just above the menu (`FA="on"`,
-`BATCH=""`). At the moment Qwen3.6-35B-A3B is the only branch overriding
-anything — it sets `BATCH="256"` — and every model runs with flash-attention on.
+`BATCH=""`). At the moment the two Qwen3.6-35B-A3B branches are the only ones
+overriding anything — both set `BATCH="256"` — and every model runs with
+flash-attention on.
 
 Adding a new model means editing the menu and `case` block in **both** scripts,
 keeping the numbering aligned between them (see `ai-prompts/`).
 
-> **Note:** Qwen3.6-35B-A3B uses `IQ4_XS` because the Arc 140V iGPU has a known
-> crash with k-quants. Context is kept at 16384 to fit comfortably in 32 GB RAM alongside the ~17.7 GB
-> weights, the OS, and KV-cache overhead.
+> **Note:** Both Qwen3.6-35B-A3B variants use `IQ4_XS` because the Arc 140V iGPU
+> has a known crash with k-quants — which is also why the uncensored repo's own
+> custom `K_P` quants are not used here, despite being the quants that repo
+> promotes. Context is kept at 16384 to fit comfortably in 32 GB RAM alongside the
+> ~17.7–19 GB weights, the OS, and KV-cache overhead.
 
 ## Vulkan Driver
 

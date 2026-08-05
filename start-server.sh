@@ -127,6 +127,7 @@ echo "  3) Gemma 4 12B          12B params, dense (~7.1 GB)"
 echo "  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)"
 echo "  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)"
 echo "  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)"
+echo "  7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -173,6 +174,21 @@ case "${MODEL_CHOICE:-6}" in
     # Arc 140V iGPU, and a small prefill batch is the recommended Arc workaround
     # (see model-research/Qwen).
     MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
+    CTX_SIZE="16384"
+    BATCH="256"
+    ;;
+  7)
+    # Qwen3.6-35B-A3B Uncensored (HauhauCS "Aggressive"): ~3B active params (~19.0 GB)
+    # Same Qwen3.6-35B-A3B MoE as option 6, fine-tuned to remove refusals; the
+    # architecture is identical, so every tuning decision below carries over:
+    # IQ4_XS to avoid the Arc 140V k-quant crash, and -b 256 as the recommended
+    # Arc prefill workaround for A3B models (see model-research/Qwen).
+    # Context stays at 16384 for the same reason as option 6 — the weights are
+    # ~1.3 GB larger here, so there is if anything slightly less headroom in 32 GB.
+    # NOTE: the model card recommends running with --jinja so llama.cpp picks up
+    # this fine-tune's chat template. This script does not pass it by default;
+    # append it at launch if you need it:  ./start-server.sh --jinja
+    MODEL_FILE="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
     CTX_SIZE="16384"
     BATCH="256"
     ;;
