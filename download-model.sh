@@ -16,13 +16,14 @@ mkdir -p "$MODELS_DIR"
 
 echo "=== Select a Model to Download ==="
 echo ""
-echo "  1) Gemma 4 E2B          2.3B effective params (~3.1 GB)"
-echo "  2) Gemma 4 E4B          4.5B effective params (~5.0 GB)"
-echo "  3) Gemma 4 12B          12B params, dense (~7.1 GB)"
-echo "  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)"
-echo "  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)"
-echo "  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)"
-echo "  7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)"
+echo "  1) Gemma 4 E2B              2.3B effective params (~3.1 GB)"
+echo "  2) Gemma 4 E4B              4.5B effective params (~5.0 GB)"
+echo "  3) Gemma 4 12B              12B params, dense (~7.1 GB)"
+echo "  4) Gemma 4 12B QAT          12B params, dense (~6.7 GB)"
+echo "  5) Gemma 4 26B-A4B          3.8B active params, MoE (~13.4 GB)"
+echo "  6) Qwen3.6-35B-A3B          ~3B active params, MoE (~17.7 GB)"
+echo "  7) Qwen3.6-35B-A3B Unc.     ~3B active params, MoE (~19.0 GB)"
+echo "  8) Qwen3.6-35B Genesis Unc. ~3B active params, MoE (~17.4 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -89,6 +90,45 @@ case "${MODEL_CHOICE:-6}" in
     MODEL_REPO="HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive"
     MODEL_FILE="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
     MODEL_SIZE_HINT="~19.0 GB"
+    ;;
+  8)
+    # Qwen3.6-35B-A3B Uncensored "Genesis-Hermes V7" (LuffyTheFox): ~3B active (35B total)
+    # A second-order fine-tune: it starts from option 7's HauhauCS "Aggressive"
+    # uncensored weights, adds NousResearch hermes-function-calling-v1 data
+    # (~2k blocks) for tool/agent use, then applies the author's "Genesis" pass —
+    # a post-training tensor repair performed directly on the GGUF (rescaling
+    # saturated weights, mean drift, and zero blocks) rather than a retrain.
+    # The architecture is untouched from options 6 and 7: Qwen35MoE, 40 layers,
+    # 256 experts (8 routed + 1 shared per token), 262K native context.
+    #
+    # WHICH FILE: the repo publishes five GGUFs, and on a 32 GB machine only two
+    # are even candidates —
+    #   APEX-Compact      17.4 GB  ← this one
+    #   MTP-APEX-Compact  18.3 GB
+    #   APEX              25.7 GB  leaves too little for the OS + KV cache
+    #   MTP-APEX          26.6 GB  same problem
+    #   Q8_K_P            43.6 GB  does not fit at all, and is a k-quant besides
+    # The MTP builds carry an extra ~0.9 GB multi-token-prediction head, which
+    # only pays off under speculative decoding — and that is measured as actively
+    # *harmful* on this hardware (see SPEC in start-server.sh and
+    # PERFORMANCE_TUNING.md), so the extra memory would buy nothing here. Hence
+    # plain APEX-Compact, which is also the quant the model card recommends.
+    #
+    # CAUTION — NOT verified against the Arc 140V k-quant crash. Unlike options 6
+    # and 7 there is no "IQ4_XS" in the filename to go on: the model card states
+    # only that the quant is imatrix-based and never publishes APEX's per-tensor
+    # GGML types. 17.4 GB across 34.7B params works out to ~4.0 bpw, a shade
+    # below IQ4_XS (4.25 bpw), but that alone does not prove it is an IQ rather
+    # than a K quant. Treat the first run as the experiment: if it crashes on the
+    # Arc iGPU the way k-quants do (see model-research/Qwen), fall back to 6 or 7.
+    #
+    # Vision: this model is multimodal, but that requires the separate
+    # mmproj-Hermes3.6-35B-A3B-Uncensored-Genesis-F16.gguf (899 MB) from the same
+    # repo, loaded via --mmproj. Not fetched here — as with the multimodal Gemma
+    # entries above, this script downloads text-only weights.
+    MODEL_REPO="LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-Hermes-V7-GGUF"
+    MODEL_FILE="Hermes3.6-35B-A3B-Uncensored-Genesis-V7-APEX-Compact.gguf"
+    MODEL_SIZE_HINT="~17.4 GB"
     ;;
   *)
     echo "ERROR: Invalid selection '$MODEL_CHOICE'."

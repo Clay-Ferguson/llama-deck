@@ -119,15 +119,23 @@ esac
 FA="${FA:-on}"
 BATCH="${BATCH:-}"
 
+# MODEL_ARGS — extra llama-server flags that one specific model requires in order
+# to work correctly at all (as opposed to FA/BATCH, which are tuning). Empty for
+# every model that needs nothing special; a per-model block below may set it.
+# These are appended before the caller's own CLI arguments, so anything you pass
+# on the command line still wins.
+MODEL_ARGS=()
+
 echo "=== Select a Model ==="
 echo ""
-echo "  1) Gemma 4 E2B          2.3B effective params (~3.1 GB)"
-echo "  2) Gemma 4 E4B          4.5B effective params (~5.0 GB)"
-echo "  3) Gemma 4 12B          12B params, dense (~7.1 GB)"
-echo "  4) Gemma 4 12B QAT      12B params, dense (~6.7 GB)"
-echo "  5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)"
-echo "  6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)"
-echo "  7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)"
+echo "  1) Gemma 4 E2B              2.3B effective params (~3.1 GB)"
+echo "  2) Gemma 4 E4B              4.5B effective params (~5.0 GB)"
+echo "  3) Gemma 4 12B              12B params, dense (~7.1 GB)"
+echo "  4) Gemma 4 12B QAT          12B params, dense (~6.7 GB)"
+echo "  5) Gemma 4 26B-A4B          3.8B active params, MoE (~13.4 GB)"
+echo "  6) Qwen3.6-35B-A3B          ~3B active params, MoE (~17.7 GB)"
+echo "  7) Qwen3.6-35B-A3B Unc.     ~3B active params, MoE (~19.0 GB)"
+echo "  8) Qwen3.6-35B Genesis Unc. ~3B active params, MoE (~17.4 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -191,6 +199,36 @@ case "${MODEL_CHOICE:-6}" in
     MODEL_FILE="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
     CTX_SIZE="16384"
     BATCH="256"
+    ;;
+  8)
+    # Qwen3.6-35B-A3B Uncensored "Genesis-Hermes V7" (~17.4 GB)
+    # Option 7's uncensored weights plus Hermes function-calling data and the
+    # author's "Genesis" tensor-repair pass. The Qwen35MoE architecture is
+    # identical to options 6 and 7, so their tuning carries over unchanged:
+    # -b 256, the recommended Arc prefill workaround for A3B models on Vulkan
+    # (see model-research/Qwen).
+    #
+    # --jinja is REQUIRED for this model, not merely suggested as it is for
+    # option 7 — which is why this is the first branch to set MODEL_ARGS. It is
+    # an agent / tool-calling fine-tune shipping its own chat_template.jinja, and
+    # without --jinja llama.cpp substitutes a built-in approximation of the
+    # template, breaking function calls and reasoning-block parsing (the same
+    # point PERFORMANCE_TUNING.md raises about --jinja generally).
+    #
+    # CTX_SIZE is a knowing compromise. The model card asks for 128K+ context to
+    # keep its thinking mode intact, but 128K of KV cache is far past what is
+    # left of 32 GB once ~17.4 GB of weights are resident. 16384 matches the
+    # other A3B entries and is what actually runs; long-form reasoning pays for
+    # it. Quantizing the KV cache is the lever that could buy more here — see
+    # PERFORMANCE_TUNING.md item 2.
+    #
+    # See download-model.sh option 8 for why this quant was chosen, including the
+    # caveat that APEX's GGML tensor types are undocumented — so unlike options 6
+    # and 7 this file is NOT confirmed to dodge the Arc 140V k-quant crash.
+    MODEL_FILE="Hermes3.6-35B-A3B-Uncensored-Genesis-V7-APEX-Compact.gguf"
+    CTX_SIZE="16384"
+    BATCH="256"
+    MODEL_ARGS=(--jinja)
     ;;
   *)
     echo "ERROR: Invalid selection '$MODEL_CHOICE'."
@@ -318,6 +356,7 @@ echo "  Flash-attn:   $FA"
 echo "  Prefill batch: ${BATCH:-default}"
 echo "  Threads:      $THREADS gen / $THREADS_BATCH batch"
 echo "  Spec decoding: $SPEC"
+echo "  Model flags:  ${MODEL_ARGS[*]:-none}"
 echo "  Endpoint:     http://${HOST}:${PORT}"
 echo "  API (OpenAI): http://${HOST}:${PORT}/v1"
 echo ""
@@ -351,4 +390,5 @@ exec "$SERVER_BIN" \
   "${GPU_ARGS[@]}" \
   "${SPEC_ARGS[@]}" \
   --reasoning "$REASONING" \
+  "${MODEL_ARGS[@]}" \
   "${EXTRA_ARGS[@]}"

@@ -89,7 +89,7 @@ setting the **llama.cpp Base URL** to `http://localhost:9090/v1`.
 | `status.sh` | Report whether the server is up, what it's serving, and run a test inference (see [Verifying the Server](#verifying-the-server)) |
 | `stop-server.sh` | Stop the running server |
 | `server-lib.sh` | Shared helper *sourced* by the scripts above (not run directly) — locates and verifies the server process |
-| `benchmark.sh` | Measure tokens-per-second: restarts the server, runs one timed inference, prints the metrics, shuts down (see [Speculative Decoding](#speculative-decoding)) |
+| `benchmark.sh` | Measure tokens-per-second: restarts the server, runs one timed inference, prints the metrics, shuts down |
 
 ## Verifying the Server
 
@@ -216,6 +216,7 @@ Several model variants are supported:
 |---------|--------|-------|-----------|---------|-------|
 | **Qwen3.6-35B-A3B** | ~3B active / 35B total (MoE) | UD-IQ4_XS | ~17.7 GB | 16384 | Near-flagship coder; MoE keeps generation fast on unified memory. Uses `-b 256` on the Arc 140V iGPU. **Current default** |
 | **Qwen3.6-35B-A3B Uncensored** | ~3B active / 35B total (MoE) | IQ4_XS | ~19.0 GB | 16384 | [HauhauCS "Aggressive"](https://huggingface.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive) fine-tune of the row above with refusals removed; same architecture, same `-b 256`. Model card suggests `--jinja` for its chat template |
+| **Qwen3.6-35B Genesis-Hermes V7** | ~3B active / 35B total (MoE) | APEX-Compact (~4.0 bpw, imatrix) | ~17.4 GB | 16384 | [LuffyTheFox](https://huggingface.co/LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-Hermes-V7-GGUF) tool-calling fine-tune of the row above, plus a "Genesis" tensor-repair pass; same architecture, same `-b 256`. **Requires `--jinja`** — passed automatically. Quant types undocumented, so **not** confirmed k-quant-safe on the Arc 140V |
 | **Gemma 4 26B-A4B** | 3.8B active / 25.2B total (MoE) | UD-IQ4_XS | ~13.4 GB | 8192 | High quality; MoE keeps generation fast despite the large size |
 | **Gemma 4 12B QAT** | 12B (dense) | UD-Q4_K_XL | ~6.7 GB | 16384 | Quantization-Aware Training; lower memory (~7 GB total), potentially faster, accuracy close to BF16 |
 | **Gemma 4 12B** | 12B (dense) | Q4_K_M | ~7.1 GB | 16384 | Strong quality |
@@ -236,11 +237,12 @@ so a given model is choice **6** in both places:
   5) Gemma 4 26B-A4B      3.8B active params, MoE (~13.4 GB)
   6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)
   7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)
+  8) Qwen3.6-35B Genesis  ~3B active params, MoE (~17.4 GB)
 
 Model [6]:
 ```
 
-Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-7
+Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-8
 exits with an error rather than starting. So switching models is just:
 
 ```bash
@@ -259,18 +261,38 @@ Per-model *settings* are not in the menu itself but in the `case` block just
 below it in `start-server.sh`. Each branch sets `CTX_SIZE`, and may override `FA`
 (flash-attention on/off) and `BATCH` (prefill batch size, `-b`); branches that
 omit those fall back to the defaults declared just above the menu (`FA="on"`,
-`BATCH=""`). At the moment the two Qwen3.6-35B-A3B branches are the only ones
-overriding anything — both set `BATCH="256"` — and every model runs with
+`BATCH=""`). At the moment the three Qwen3.6-35B-A3B branches are the only ones
+overriding anything — all three set `BATCH="256"` — and every model runs with
 flash-attention on.
+
+A branch may also set `MODEL_ARGS`, an array of extra `llama-server` flags that a
+model needs in order to work *correctly at all*, as distinct from the tuning
+knobs above. Only choice **8** uses it today, for its mandatory `--jinja`. These
+flags are appended before your own command-line arguments, so anything you pass
+to `./start-server.sh` still overrides them, and the startup banner prints them
+on a `Model flags:` line so you can see what was applied.
 
 Adding a new model means editing the menu and `case` block in **both** scripts,
 keeping the numbering aligned between them (see `ai-prompts/`).
 
-> **Note:** Both Qwen3.6-35B-A3B variants use `IQ4_XS` because the Arc 140V iGPU
-> has a known crash with k-quants — which is also why the uncensored repo's own
-> custom `K_P` quants are not used here, despite being the quants that repo
-> promotes. Context is kept at 16384 to fit comfortably in 32 GB RAM alongside the
-> ~17.7–19 GB weights, the OS, and KV-cache overhead.
+> **Note:** Choices **6** and **7** use `IQ4_XS` because the Arc 140V iGPU has a
+> known crash with k-quants — which is also why the uncensored repo's own custom
+> `K_P` quants are not used here, despite being the quants that repo promotes.
+> Context is kept at 16384 to fit comfortably in 32 GB RAM alongside the
+> ~17.4–19 GB weights, the OS, and KV-cache overhead.
+>
+> **Choice 8 is the exception, and is unproven on this hardware.** Its repo
+> publishes custom "APEX" quants and documents only that they are imatrix-based —
+> the per-tensor GGML types are never stated, so there is no way to confirm from
+> the model card that it avoids k-quants. The file works out to ~4.0 bpw, just
+> under IQ4_XS's 4.25, which is suggestive but not proof. Treat the first launch
+> as the test: if it crashes on the Arc iGPU the way k-quants do, fall back to 6
+> or 7. Of that repo's five GGUFs, `APEX-Compact` is the one used here because
+> the two full `APEX` builds (25.7 / 26.6 GB) leave too little of the 32 GB for
+> the OS and KV cache, `Q8_K_P` (43.6 GB) does not fit at all, and the `MTP`
+> builds spend ~0.9 GB on a multi-token-prediction head that only pays off under
+> speculative decoding — which is harmful on this hardware (see the `SPEC` block
+> in `start-server.sh` and `PERFORMANCE_TUNING.md`).
 
 ## Vulkan Driver
 
