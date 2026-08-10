@@ -222,6 +222,7 @@ Several model variants are supported:
 | **Gemma 4 12B** | 12B (dense) | Q4_K_M | ~7.1 GB | 16384 | Strong quality |
 | **Gemma 4 E4B** | 4.5B effective (8B total) | Q4_K_M | ~5.0 GB | 16384 | Good balance |
 | **Gemma 4 E2B** | 2.3B effective (5.1B total) | Q4_K_M | ~3.1 GB | 16384 | Lightest, fastest |
+| **Muse Glimmer 30B** | 29.6B (dense) | K-quant (kquant-17gb) | ~16.8 GB | 16384 | Dense, not MoE — expect ~5-8 tok/s per the project's bandwidth math, well under the MoE models above. Repo ships **only K-quants**, no IQ-quant fallback, so it is **unverified against the Arc 140V k-quant crash** |
 
 You don't edit anything to switch between them. Both `./download-model.sh` and
 `./start-server.sh` open with the same menu, using the same numbering in each —
@@ -238,11 +239,12 @@ so a given model is choice **6** in both places:
   6) Qwen3.6-35B-A3B      ~3B active params, MoE (~17.7 GB)
   7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)
   8) Qwen3.6-35B Genesis  ~3B active params, MoE (~17.4 GB)
+  9) Muse Glimmer 30B     29.6B params, dense (~16.8 GB)
 
 Model [6]:
 ```
 
-Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-8
+Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-9
 exits with an error rather than starting. So switching models is just:
 
 ```bash
@@ -293,6 +295,14 @@ keeping the numbering aligned between them (see `ai-prompts/`).
 > builds spend ~0.9 GB on a multi-token-prediction head that only pays off under
 > speculative decoding — which is harmful on this hardware (see the `SPEC` block
 > in `start-server.sh` and `PERFORMANCE_TUNING.md`).
+>
+> **Choice 9 (Muse Glimmer 30B) carries two caveats of its own.** It is a dense
+> model, not MoE, so it reads all ~29.6B params every token; the bandwidth math
+> in `model-research/Qwen` predicts dense models this large land around 5-8
+> tok/s on this hardware, well under the MoE models above. Its repo also ships
+> **only K-quants** — there is no IQ-quant to fall back to the way choices 6 and
+> 7 use IQ4_XS to dodge the Arc 140V k-quant crash, so this one is genuinely
+> unverified against that bug and has no in-repo fallback if it hits it.
 
 ## Vulkan Driver
 

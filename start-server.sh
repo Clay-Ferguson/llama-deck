@@ -136,6 +136,7 @@ echo "  5) Gemma 4 26B-A4B          3.8B active params, MoE (~13.4 GB)"
 echo "  6) Qwen3.6-35B-A3B          ~3B active params, MoE (~17.7 GB)"
 echo "  7) Qwen3.6-35B-A3B Unc.     ~3B active params, MoE (~19.0 GB)"
 echo "  8) Qwen3.6-35B Genesis Unc. ~3B active params, MoE (~17.4 GB)"
+echo "  9) Muse Glimmer 30B         29.6B params, dense (~16.8 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -229,6 +230,34 @@ case "${MODEL_CHOICE:-6}" in
     CTX_SIZE="16384"
     BATCH="256"
     MODEL_ARGS=(--jinja)
+    ;;
+  9)
+    # Muse Glimmer 30B (dense): 29.6B params, 52 layers, 131K+ native context
+    # (~16.8 GB). CTX_SIZE matches the other large models here — the weights
+    # are close in size to option 6's ~17.7 GB, so the same 16384 leaves
+    # comparable headroom in 32 GB. No documented reason to override FA or
+    # BATCH for this model, so both fall through to the defaults above (FA on,
+    # BATCH unset) — the -b 256 tweak used by the three Qwen3.6-35B-A3B
+    # branches is specifically an A3B/MoE-on-Vulkan prefill workaround
+    # (model-research/Qwen), not something known to apply to this dense model.
+    #
+    # CAUTION #1 — no IQ-quant exists for this model; this repo ships K-quants
+    # only, and the Arc 140V iGPU has a known k-quant crash (see
+    # model-research/Qwen). Options 6 and 7 dodge that bug via IQ4_XS; this
+    # model has no such fallback quant within its own repo. Treat the first
+    # launch as the test.
+    #
+    # CAUTION #2 — this is a dense model, not MoE, so it reads all ~29.6B
+    # params every token. model-research/Qwen's bandwidth math predicts dense
+    # models this large land around 5-8 tok/s on this hardware (it measured a
+    # dense 27B Qwen there, under the 10 TPS floor targeted in that doc) — so
+    # expect noticeably slower generation than every MoE model above.
+    #
+    # See download-model.sh option 9 for why kquant-17gb (not kquant-dynamic)
+    # was the file chosen, and for the optional mmproj/dflash companion files
+    # that were deliberately not downloaded.
+    MODEL_FILE="muse-glimmer-30B-kquant-17gb.gguf"
+    CTX_SIZE="16384"
     ;;
   *)
     echo "ERROR: Invalid selection '$MODEL_CHOICE'."

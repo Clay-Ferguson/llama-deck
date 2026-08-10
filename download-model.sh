@@ -24,6 +24,7 @@ echo "  5) Gemma 4 26B-A4B          3.8B active params, MoE (~13.4 GB)"
 echo "  6) Qwen3.6-35B-A3B          ~3B active params, MoE (~17.7 GB)"
 echo "  7) Qwen3.6-35B-A3B Unc.     ~3B active params, MoE (~19.0 GB)"
 echo "  8) Qwen3.6-35B Genesis Unc. ~3B active params, MoE (~17.4 GB)"
+echo "  9) Muse Glimmer 30B         29.6B params, dense (~16.8 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -129,6 +130,40 @@ case "${MODEL_CHOICE:-6}" in
     MODEL_REPO="LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-Hermes-V7-GGUF"
     MODEL_FILE="Hermes3.6-35B-A3B-Uncensored-Genesis-V7-APEX-Compact.gguf"
     MODEL_SIZE_HINT="~17.4 GB"
+    ;;
+  9)
+    # Muse Glimmer 30B (dense): 29.6B params, 52 layers, GQA 32Q/2KV heads,
+    # 131K+ native context. Unlike every MoE model above, this is a plain dense
+    # transformer, so all ~29.6B params are read from memory on every token.
+    #
+    # WHICH FILE: the repo publishes two K-quant builds —
+    #   kquant-17gb      16.8 GB  ← this one, sized by the model card for
+    #                              24 GB-class hardware
+    #   kquant-dynamic    19.7 GB  targets higher-VRAM platforms; more weight
+    #                              for less headroom here, no upside on this box
+    # Two more files in the repo are NOT fetched here, per instructions: the
+    # ~1.4 GB mmproj-kquant.gguf (vision) and the ~1.63 GB dflash-kquant.gguf
+    # (a speculative-decoding draft model — and see the SPEC block in
+    # start-server.sh for why speculative decoding measures as harmful on this
+    # hardware anyway).
+    #
+    # CAUTION #1 — no IQ-quant exists for this model. This repo ships K-quants
+    # only. Options 6 and 7 above deliberately chose IQ4_XS specifically to
+    # dodge the Arc 140V iGPU's known k-quant crash (see model-research/Qwen);
+    # this model offers no such alternative to fall back to within this repo.
+    # Treat the first launch as the test — if it crashes, there is no other
+    # quant here to try instead.
+    #
+    # CAUTION #2 — dense, not MoE, so expect lower speed. Every model above
+    # this one was chosen to be Mixture-of-Experts specifically because dense
+    # models this large fail the bandwidth math worked out in
+    # model-research/Qwen: that doc measured a dense 27B Qwen at an estimated
+    # ~5-8 tok/s, under the 10 TPS floor targeted there. This 29.6B dense model
+    # is in the same boat — added for completeness / quality-over-speed use,
+    # not because it is expected to be fast.
+    MODEL_REPO="meta-models/Muse-Glimmer-30B-GGUF"
+    MODEL_FILE="muse-glimmer-30B-kquant-17gb.gguf"
+    MODEL_SIZE_HINT="~16.8 GB"
     ;;
   *)
     echo "ERROR: Invalid selection '$MODEL_CHOICE'."
