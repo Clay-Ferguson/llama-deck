@@ -22,15 +22,15 @@ set -euo pipefail
 # TO UPGRADE — this is a deliberate, manual act:
 #   1. Find the newest tag:   ./check-current-versions.sh --latest
 #      (or browse https://github.com/ggml-org/llama.cpp/releases — tags look
-#      like "b10229")
-#   2. Try it without editing this file:   LLAMA_TAG=b10310 ./setup.sh
+#      like "b10344")
+#   2. Try it without editing this file:   LLAMA_TAG=b10355 ./setup.sh
 #   3. Test it:  ./start-server.sh && ./status.sh    and  ./benchmark.sh
 #   4. If it works, edit the line below to that tag to make it permanent.
 #
 # IF AN UPGRADE GOES BADLY: set the line below back to the previous tag and
 # re-run this script. It re-downloads that release from GitHub and overwrites
 # the install, putting you back exactly where you were.
-LLAMA_TAG="${LLAMA_TAG:-b10229}"
+LLAMA_TAG="${LLAMA_TAG:-b10355}"
 # ─────────────────────────────────────────────────────────────────────────
 
 BIN_DIR="$HOME/.local/bin"

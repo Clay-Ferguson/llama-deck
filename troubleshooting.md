@@ -4,6 +4,8 @@ Problems that don't fit neatly into `README.md`'s own Troubleshooting section �
 usually because they're about the *process* of adding or updating a model
 rather than about running the scripts day to day.
 
+RESOLUTION: This was ultimately fixed by upgrading to version 'b10355' on 8/10/26
+
 ## ERROR: unknown model architecture
 
 ### TL;DR
@@ -127,6 +129,36 @@ project. Timeline:
 - Resolution: wait for a release tag that includes the merge, then
   `LLAMA_TAG=<that tag> ./setup-with-vulkan.sh`, test, and only then update the
   pin permanently.
+
+**Note on release-tag timestamps.** `b10344` was *published* at 16:24Z, hours
+after the Muse Glimmer PR merged at 11:07Z, and still did not contain it. Do
+not reason from publication times — llama.cpp rebases on merge, so a release
+cut later in the day can sit at an earlier commit than a PR that "merged"
+earlier by wall clock. The `compare` API in step 4 is the only reliable check.
+
+### Follow-up: the upgrade to b10344 (2026-08-10, later the same day)
+
+The pin was moved to the newest release anyway — upgrading was worth doing on
+its own merits, independent of Muse Glimmer. What that settled:
+
+- Both builds were actually running `b9946` on disk, *older* than the `b10229`
+  they claimed to be pinned at — the pin had been edited at some point without
+  re-running the setup scripts. `./check-current-versions.sh` exists precisely
+  to catch this, and did.
+- `LLAMA_TAG` is now `b10344` in both `setup.sh` and `setup-with-vulkan.sh`,
+  and both are installed and verified: Vulkan still detects the Arc iGPU, and
+  option 6 (Qwen3.6-35B-A3B) benchmarks at **10.1 tok/s** generation against
+  the ~10.4 tok/s recorded in README — no regression.
+- Option 9 still fails with `unknown model architecture: 'muse-glimmer'`, as
+  the commit math above predicted. Nothing is wrong with the model file or the
+  scripts; `b10344` simply predates the merge. Re-check with
+  `./check-current-versions.sh --latest` and upgrade again once a tag at or
+  past the merge commit (roughly `b10349`+) is published.
+- Noted in passing: `b10344` warns that llama.cpp's **default server port will
+  change from 8080 to 9931** in a future release. This project sets `PORT`
+  explicitly in `start-server.sh`, so nothing breaks — but a future upgrade
+  will need `status.sh`, `benchmark.sh`, and the MkBrowser base URL checked if
+  that default is ever relied on.
 
 This is also a useful moment to re-check the **other** open caution on option
 9: it has no IQ-quant, so it's unverified against the separate Arc 140V

@@ -387,7 +387,7 @@ happens to be newest. The version lives in a single line near the top of each
 script:
 
 ```bash
-LLAMA_TAG="${LLAMA_TAG:-b10229}"
+LLAMA_TAG="${LLAMA_TAG:-b10344}"
 ```
 
 llama.cpp ships new releases constantly — often several a day. Without a pin,
@@ -415,8 +415,8 @@ installs — though keeping the two tags in step is usually what you want.
 ```
 ── Vulkan build
    install dir: /home/you/.local/lib/llama.cpp-vulkan
-   pinned in setup-with-vulkan.sh: b10229
-   installed:   b10229  ✓ matches the pin
+   pinned in setup-with-vulkan.sh: b10344
+   installed:   b10344  ✓ matches the pin
    size:        181M
 ```
 
@@ -427,10 +427,10 @@ and forgot to update the pin afterwards, leaving disk and script disagreeing.
 ### Upgrading
 
 1. **Find the newest tag** — `./check-current-versions.sh --latest`, or browse
-   <https://github.com/ggml-org/llama.cpp/releases>. Tags look like `b10229`.
+   <https://github.com/ggml-org/llama.cpp/releases>. Tags look like `b10344`.
 2. **Try it without committing.** Override the pin for a single run:
    ```bash
-   LLAMA_TAG=b10310 ./setup-with-vulkan.sh
+   LLAMA_TAG=b10350 ./setup-with-vulkan.sh
    ```
 3. **Test it before trusting it:**
    ```bash

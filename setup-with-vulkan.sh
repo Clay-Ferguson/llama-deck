@@ -35,9 +35,9 @@ set -euo pipefail
 # TO UPGRADE — this is a deliberate, manual act:
 #   1. Find the newest tag:   ./check-current-versions.sh --latest
 #      (or browse https://github.com/ggml-org/llama.cpp/releases — tags look
-#      like "b10229")
+#      like "b10344")
 #   2. Try it without editing this file:
-#        LLAMA_TAG=b10310 ./setup-with-vulkan.sh
+#        LLAMA_TAG=b10355 ./setup-with-vulkan.sh
 #   3. Test it. This script's own GPU-detection step (Step 5 below) runs on
 #      every install, so you will see immediately if the new release stopped
 #      recognizing your GPU. Then: ./start-server.sh && ./status.sh
@@ -48,7 +48,7 @@ set -euo pipefail
 # re-run this script. It re-downloads that release from GitHub and overwrites
 # the install, putting you back exactly where you were. (Meanwhile the CPU
 # build is untouched and still available: BACKEND=cpu ./start-server.sh)
-LLAMA_TAG="${LLAMA_TAG:-b10229}"
+LLAMA_TAG="${LLAMA_TAG:-b10355}"
 # ─────────────────────────────────────────────────────────────────────────
 
 BIN_DIR="$HOME/.local/bin"
