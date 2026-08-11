@@ -89,7 +89,6 @@ setting the **llama.cpp Base URL** to `http://localhost:9090/v1`.
 | `status.sh` | Report whether the server is up, what it's serving, and run a test inference (see [Verifying the Server](#verifying-the-server)) |
 | `stop-server.sh` | Stop the running server |
 | `server-lib.sh` | Shared helper *sourced* by the scripts above (not run directly) — locates and verifies the server process |
-| `benchmark.sh` | Measure tokens-per-second: restarts the server, runs one timed inference, prints the metrics, shuts down |
 
 ## Verifying the Server
 
@@ -267,12 +266,23 @@ omit those fall back to the defaults declared just above the menu (`FA="on"`,
 overriding anything — all three set `BATCH="256"` — and every model runs with
 flash-attention on.
 
-A branch may also set `MODEL_ARGS`, an array of extra `llama-server` flags that a
-model needs in order to work *correctly at all*, as distinct from the tuning
-knobs above. Only choice **8** uses it today, for its mandatory `--jinja`. These
-flags are appended before your own command-line arguments, so anything you pass
-to `./start-server.sh` still overrides them, and the startup banner prints them
-on a `Model flags:` line so you can see what was applied.
+`MODEL_ARGS` is a separate array of extra `llama-server` flags needed to make a
+model work *correctly at all*, as distinct from the tuning knobs above. It is
+declared just above the menu and currently holds **`--jinja`**, applied to every
+model; a branch may append to it for a flag only one model needs (none do today).
+These flags are appended before your own command-line arguments, so anything you
+pass to `./start-server.sh` still overrides them, and the startup banner prints
+them on a `Model flags:` line so you can see what was applied.
+
+`--jinja` makes llama.cpp use each GGUF's own embedded chat template instead of a
+built-in approximation, which is what drives tool/function calling and
+reasoning-block parsing. Every model in the menu ships a real template (7K–17K
+characters, all containing tool-calling logic). **Note that jinja is already
+llama.cpp's default on the pinned build** — `--jinja, --no-jinja ... (default:
+enabled)` — so passing it changes nothing today; it is explicit in order to *pin*
+the behavior, for the same reason [`LLAMA_TAG` is pinned](#pinned-llamacpp-version).
+To test a model against llama.cpp's built-in template instead, run
+`./start-server.sh --no-jinja`.
 
 Adding a new model means editing the menu and `case` block in **both** scripts,
 keeping the numbering aligned between them (see `ai-prompts/`).
@@ -436,7 +446,6 @@ and forgot to update the pin afterwards, leaving disk and script disagreeing.
    ```bash
    ./start-server.sh     # does it load without crashing?
    ./status.sh           # healthy, serving the right model?
-   ./benchmark.sh        # did tokens/sec regress?
    ```
    `setup-with-vulkan.sh` also re-runs its GPU-detection check on every install,
    so you'll see immediately if a new release stopped recognizing your GPU.

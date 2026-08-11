@@ -111,20 +111,35 @@ esac
 #           the naive path up to floating-point rounding. So it costs no model
 #           quality, and it is the prerequisite for KV-cache quantization
 #           (--cache-type-k/v). Its benefit is invisible at short context and
-#           grows with N, so only a long prompt can measure it:
-#             FA=off ./start-server.sh   # then ./benchmark.sh -f README.md -n 100
+#           grows with N, so it only shows up on long prompts:
+#             FA=off ./start-server.sh
 #   BATCH — empty uses the llama.cpp default; "256" improves A3B prefill on Vulkan.
-# Both are env-overridable for benchmark sweeps; a per-model block below may
-# still override either one for that specific model.
+# Both are env-overridable; a per-model block below may still override either
+# one for that specific model.
 FA="${FA:-on}"
 BATCH="${BATCH:-}"
 
-# MODEL_ARGS — extra llama-server flags that one specific model requires in order
-# to work correctly at all (as opposed to FA/BATCH, which are tuning). Empty for
-# every model that needs nothing special; a per-model block below may set it.
+# MODEL_ARGS — extra llama-server flags applied to every model, plus any a single
+# model requires in order to work correctly at all (as opposed to FA/BATCH, which
+# are tuning). A per-model block below may append to it.
 # These are appended before the caller's own CLI arguments, so anything you pass
 # on the command line still wins.
-MODEL_ARGS=()
+#
+# --jinja makes llama.cpp use each GGUF's own embedded chat template rather than a
+# built-in approximation of it. That is what drives tool/function calling and
+# reasoning-block parsing, and every model in the menu below ships a real template
+# (7K-17K chars, all of them containing tool-calling logic).
+#
+# IMPORTANT: on the pinned build (b10355) jinja is ALREADY llama.cpp's default —
+# `--jinja, --no-jinja ... (default: enabled)`. So this flag changes nothing today;
+# it is passed explicitly to *pin* the behavior, for the same reason LLAMA_TAG is
+# pinned: a default that flipped on once can flip back on some unrelated Tuesday.
+# It costs nothing and it makes the intent visible in the startup banner.
+#
+# To test a model against llama.cpp's built-in template instead, pass the negation
+# on the command line (it wins, being appended later):
+#   ./start-server.sh --no-jinja
+MODEL_ARGS=(--jinja)
 
 echo "=== Select a Model ==="
 echo ""
@@ -195,8 +210,8 @@ case "${MODEL_CHOICE:-6}" in
     # Context stays at 16384 for the same reason as option 6 — the weights are
     # ~1.3 GB larger here, so there is if anything slightly less headroom in 32 GB.
     # NOTE: the model card recommends running with --jinja so llama.cpp picks up
-    # this fine-tune's chat template. This script does not pass it by default;
-    # append it at launch if you need it:  ./start-server.sh --jinja
+    # this fine-tune's chat template. That is now handled globally by MODEL_ARGS
+    # above (and is llama.cpp's own default on b10355), so nothing to do here.
     MODEL_FILE="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
     CTX_SIZE="16384"
     BATCH="256"
@@ -210,11 +225,12 @@ case "${MODEL_CHOICE:-6}" in
     # (see model-research/Qwen).
     #
     # --jinja is REQUIRED for this model, not merely suggested as it is for
-    # option 7 — which is why this is the first branch to set MODEL_ARGS. It is
-    # an agent / tool-calling fine-tune shipping its own chat_template.jinja, and
-    # without --jinja llama.cpp substitutes a built-in approximation of the
-    # template, breaking function calls and reasoning-block parsing (the same
-    # point PERFORMANCE_TUNING.md raises about --jinja generally).
+    # option 7. It is an agent / tool-calling fine-tune shipping its own
+    # chat_template.jinja, and without --jinja llama.cpp substitutes a built-in
+    # approximation of the template, breaking function calls and reasoning-block
+    # parsing. This branch used to set MODEL_ARGS itself; --jinja is now applied
+    # globally in MODEL_ARGS above, so the per-model assignment was redundant and
+    # has been removed. Do not pass --no-jinja when running this model.
     #
     # CTX_SIZE is a knowing compromise. The model card asks for 128K+ context to
     # keep its thinking mode intact, but 128K of KV cache is far past what is
@@ -229,7 +245,6 @@ case "${MODEL_CHOICE:-6}" in
     MODEL_FILE="Hermes3.6-35B-A3B-Uncensored-Genesis-V7-APEX-Compact.gguf"
     CTX_SIZE="16384"
     BATCH="256"
-    MODEL_ARGS=(--jinja)
     ;;
   9)
     # Muse Glimmer 30B (dense): 29.6B params, 52 layers, 131K+ native context
@@ -256,6 +271,10 @@ case "${MODEL_CHOICE:-6}" in
     # See download-model.sh option 9 for why kquant-17gb (not kquant-dynamic)
     # was the file chosen, and for the optional mmproj/dflash companion files
     # that were deliberately not downloaded.
+    #
+    # NOTE: --jinja is required for this model — it ships a bespoke agentic
+    # template using <atem:function_calls> tags. Applied globally in MODEL_ARGS
+    # above, so the per-model assignment that was here has been removed.
     MODEL_FILE="muse-glimmer-30B-kquant-17gb.gguf"
     CTX_SIZE="16384"
     ;;
@@ -353,8 +372,7 @@ export LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 #   --threads-batch 8  Prompt ingestion (prefill) is compute-bound rather than
 #                      bandwidth-bound, so it benefits from all 8 cores.
 #
-# Both are overridable from the environment so they can be swept against
-# ./benchmark.sh without editing this file:
+# Both are overridable from the environment, without editing this file:
 #   THREADS=1 ./start-server.sh
 #   THREADS=2 THREADS_BATCH=8 ./start-server.sh
 #
@@ -368,7 +386,7 @@ export LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 #   - They share the same LPDDR5X bus, so spinning threads add memory traffic
 #     alongside the GPU that is already trying to saturate it.
 # So in GPU mode, fewer generation threads is often *faster*. Worth measuring.
-THREADS="${THREADS:-4}"
+THREADS="${THREADS:-1}"
 THREADS_BATCH="${THREADS_BATCH:-8}"
 # ─────────────────────────────────────────────────────────────────────────
 

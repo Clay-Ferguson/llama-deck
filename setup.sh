@@ -24,7 +24,7 @@ set -euo pipefail
 #      (or browse https://github.com/ggml-org/llama.cpp/releases — tags look
 #      like "b10344")
 #   2. Try it without editing this file:   LLAMA_TAG=b10355 ./setup.sh
-#   3. Test it:  ./start-server.sh && ./status.sh    and  ./benchmark.sh
+#   3. Test it:  ./start-server.sh && ./status.sh
 #   4. If it works, edit the line below to that tag to make it permanent.
 #
 # IF AN UPGRADE GOES BADLY: set the line below back to the previous tag and

@@ -41,7 +41,6 @@ set -euo pipefail
 #   3. Test it. This script's own GPU-detection step (Step 5 below) runs on
 #      every install, so you will see immediately if the new release stopped
 #      recognizing your GPU. Then: ./start-server.sh && ./status.sh
-#      and ./benchmark.sh to check tokens/sec did not regress.
 #   4. If it works, edit the line below to that tag to make it permanent.
 #
 # IF AN UPGRADE GOES BADLY: set the line below back to the previous tag and

@@ -4,9 +4,9 @@ Problems that don't fit neatly into `README.md`'s own Troubleshooting section â€
 usually because they're about the *process* of adding or updating a model
 rather than about running the scripts day to day.
 
-RESOLUTION: This was ultimately fixed by upgrading to version 'b10355' on 8/10/26
-
 ## ERROR: unknown model architecture
+
+RESOLUTION: This was ultimately fixed by upgrading to version 'b10355' on 8/10/26
 
 ### TL;DR
 the description below of this type of error, when it was first encountered 
@@ -157,8 +157,8 @@ its own merits, independent of Muse Glimmer. What that settled:
 - Noted in passing: `b10344` warns that llama.cpp's **default server port will
   change from 8080 to 9931** in a future release. This project sets `PORT`
   explicitly in `start-server.sh`, so nothing breaks â€” but a future upgrade
-  will need `status.sh`, `benchmark.sh`, and the MkBrowser base URL checked if
-  that default is ever relied on.
+  will need `status.sh` and the MkBrowser base URL checked if that default is
+  ever relied on.
 
 This is also a useful moment to re-check the **other** open caution on option
 9: it has no IQ-quant, so it's unverified against the separate Arc 140V
