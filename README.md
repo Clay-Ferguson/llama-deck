@@ -222,7 +222,8 @@ Several model variants are supported:
 | **Gemma 4 E4B** | 4.5B effective (8B total) | Q4_K_M | ~5.0 GB | 16384 | Good balance |
 | **Gemma 4 E2B** | 2.3B effective (5.1B total) | Q4_K_M | ~3.1 GB | 16384 | Lightest, fastest |
 | **Muse Glimmer 30B** | 29.6B (dense) | K-quant (kquant-17gb) | ~16.8 GB | 16384 | Dense, not MoE — expect ~5-8 tok/s per the project's bandwidth math, well under the MoE models above. Repo ships **only K-quants**, no IQ-quant fallback, so it is **unverified against the Arc 140V k-quant crash** |
-| **Qwen3.8-27B** | 27B (dense) | Q4_K_M | ~17.7 GB | 16384 | **Served from LM Studio's folder**, not downloaded by this project — the entry that exercises the cross-tree path. Q4_K_M is a K-quant with no IQ fallback in that repo, so like Muse Glimmer it is **unverified against the Arc 140V k-quant crash**. Appears dense (no `A3B` marker), so expect the same ~5-8 tok/s penalty rather than MoE speed |
+| **Qwen3.8-27B** | 27B (dense) | Q4_K_M | ~16.8 GB | 16384 | **Served from LM Studio's folder**, not downloaded by this project. A K-quant with no IQ fallback, so it carried the Arc 140V k-quant crash risk — but it **runs fine on Vulkan** (confirmed 2026-08-14), which is useful evidence that the bug doesn't hit every K-quant. Dense, so expect ~5-8 tok/s rather than MoE speed. LM Studio reports this as ~17.7 GB because that figure includes the 0.93 GB mmproj; only the 16.8 GB of weights get loaded |
+| **Gemma 4 E2B** *(LM Studio copy)* | 2.3B effective (5.1B total) | Q4_K_M | ~3.4 GB | 16384 | **Same model as the Gemma 4 E2B row above**, packaged by `lmstudio-community` instead of `unsloth` — a separate conversion, ~320 MB larger, so output won't match byte-for-byte. Kept alongside option 1 for packager comparison; the most redundant model on the menu if you need disk back |
 
 You don't edit anything to switch between them. `./start-server.sh` opens with a
 numbered menu and serves whichever you pick:
@@ -239,7 +240,8 @@ numbered menu and serves whichever you pick:
   7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)
   8) Qwen3.6-35B Genesis  ~3B active params, MoE (~17.4 GB)
   9) Muse Glimmer 30B     29.6B params, dense (~16.8 GB)
- 10) Qwen3.8-27B  [LM Studio]  27B params, dense (~17.7 GB)
+ 10) Qwen3.8-27B  [LM Studio]  27B params, dense (~16.8 GB)
+ 11) Gemma 4 E2B  [LM Studio]  2.3B effective params (~3.4 GB)
 
 Model [6]:
 ```

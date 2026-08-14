@@ -174,7 +174,8 @@ echo "  6) Qwen3.6-35B-A3B                          3B active params, MoE (~17.7
 echo "  7) Qwen3.6-35B-A3B Unc.                     3B active params, MoE (~19.0 GB)"
 echo "  8) Qwen3.6-35B Genesis Unc.                 3B active params, MoE (~17.4 GB)"
 echo "  9) Muse Glimmer 30B (WARNING: Slow ~3tps)   29.6B params, dense (~16.8 GB)"
-echo " 10) Qwen3.8-27B  [LM Studio]                27B params, dense (~17.7 GB)"
+echo " 10) Qwen3.8-27B  [LM Studio]                 27B params, dense (~16.8 GB)"
+echo " 11) Gemma 4 E2B  [LM Studio]                 2.3B effective params (~3.4 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -317,23 +318,54 @@ case "${MODEL_CHOICE:-6}" in
     # LM Studio, look up where it actually landed before adding it here:
     #   find "$LMS_MODELS" -name '*.gguf' -printf '%T@ %p\n' | sort -rn | head -5
     #
-    # CAUTION #1 — this is a K-QUANT (Q4_K_M), and the Arc 140V iGPU has a known
-    # k-quant crash (see model-research/Qwen). Options 6 and 7 specifically chose
-    # IQ4_XS to dodge it; this file offers no such fallback. Treat the first
-    # launch as the test — and if it does crash on Vulkan, that is this bug and
-    # not the model path: confirm with BACKEND=cpu ./start-server.sh.
+    # K-QUANT, BUT CONFIRMED WORKING (2026-08-14). This is a Q4_K_M with no
+    # IQ-quant fallback in the repo, so it carried the same Arc 140V k-quant
+    # crash risk that options 6 and 7 dodge by choosing IQ4_XS, and that option 9
+    # is still unverified against (see model-research/Qwen). It was run on the
+    # Vulkan backend and did not crash — so this is now a data point that the
+    # k-quant bug does not hit every k-quant on this hardware. Option 9's warning
+    # stands on its own; it has not been retested.
     #
-    # CAUTION #2 — appears to be DENSE, not MoE: 27B params with no "A3B" marker
-    # in the name, ~17.7 GB on disk. If so, expect the same bandwidth-bound
-    # ~5-8 tok/s that option 9 warns about, not the fast MoE generation of
-    # options 6-8. BATCH is left at the default on purpose: the -b 256 tweak used
-    # by the A3B entries is an MoE-on-Vulkan prefill workaround, not something
-    # known to apply to a dense model.
+    # CAUTION — appears to be DENSE, not MoE: 27B params with no "A3B" marker in
+    # the name. Expect the same bandwidth-bound ~5-8 tok/s that option 9 warns
+    # about, not the fast MoE generation of options 6-8. BATCH is left at the
+    # default on purpose: the -b 256 tweak used by the A3B entries is an
+    # MoE-on-Vulkan prefill workaround, not something known to apply to a dense
+    # model.
+    #
+    # SIZE — the weights are 16.81 GB. Note that LM Studio's own UI and
+    # `lms ls` report ~17.7 GB for this model: that figure is the whole repo
+    # folder, weights plus the 0.93 GB mmproj below. Only the weights are loaded
+    # here, so budget 16.8 GB, not 17.7 GB.
     #
     # Vision: LM Studio also downloaded mmproj-Qwen3.8-27B-BF16.gguf alongside
     # this file. Loading it would need --mmproj; as everywhere else in this
     # script, we serve text-only weights.
     MODEL_PATH="$LMS_MODELS/lmstudio-community/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_K_M.gguf"
+    CTX_SIZE="16384"
+    ;;
+  11)
+    # Gemma 4 E2B, LM Studio's copy: 2.3B effective params (~3.4 GB)
+    #
+    # THIS IS THE SAME MODEL AS OPTION 1, from a different packager — it is not a
+    # mistake in the menu, and the two are not interchangeable byte-for-byte:
+    #   option  1  3.11 GB  unsloth/gemma-4-E2B-it-GGUF        (llama-deck tree)
+    #   option 11  3.43 GB  lmstudio-community/gemma-4-E2B-it-GGUF (LM Studio tree)
+    # Both are labelled Q4_K_M, but they are separate conversions of the same
+    # weights and differ by ~320 MB, so they will not generate identical output.
+    # Having both is what lets you compare packagers on identical hardware; if you
+    # ever want the ~3.4 GB back, this is the safest model on the menu to delete
+    # (from LM Studio's My Models tab), since option 1 covers the same ground.
+    #
+    # CTX_SIZE matches option 1 — same architecture, same memory profile, and the
+    # model's own trained context is 131072, so 16384 is a budget choice rather
+    # than a model limit. FA and BATCH fall through to the defaults for the same
+    # reason they do in option 1: nothing about this model calls for either.
+    #
+    # Vision: LM Studio also pulled mmproj-gemma-4-E2B-it-BF16.gguf (0.99 GB)
+    # into this folder. It would need --mmproj to be used; as everywhere else in
+    # this script, only the text weights are served.
+    MODEL_PATH="$LMS_MODELS/lmstudio-community/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf"
     CTX_SIZE="16384"
     ;;
   *)
