@@ -84,7 +84,7 @@ setting the **llama.cpp Base URL** to `http://localhost:9090/v1`.
 | `setup.sh` | Download and install the **CPU-only** llama.cpp binaries to `~/.local/bin/`, at a [pinned version](#pinned-llamacpp-version) |
 | `setup-with-vulkan.sh` | Download and install a **Vulkan (GPU)** llama.cpp build side-by-side (see [Vulkan Driver](#vulkan-driver)) |
 | `check-current-versions.sh` | Report which llama.cpp version each build is actually running, and whether it matches the pin (see [Pinned llama.cpp Version](#pinned-llamacpp-version)) |
-| `download-model.sh` | Download a quantized GGUF model to `~/.local/share/llama.cpp/models/` |
+| `download-model.sh` | Download a quantized GGUF model to `~/.local/share/llama.cpp/models/`. Legacy path — models obtained through LM Studio don't go through this (see [Models from LM Studio](#models-from-lm-studio)) |
 | `start-server.sh` | Launch the server on `localhost:8080`; selects CPU or GPU via the `BACKEND` env var (default: `gpu`) |
 | `status.sh` | Report whether the server is up, what it's serving, and run a test inference (see [Verifying the Server](#verifying-the-server)) |
 | `stop-server.sh` | Stop the running server |
@@ -222,10 +222,10 @@ Several model variants are supported:
 | **Gemma 4 E4B** | 4.5B effective (8B total) | Q4_K_M | ~5.0 GB | 16384 | Good balance |
 | **Gemma 4 E2B** | 2.3B effective (5.1B total) | Q4_K_M | ~3.1 GB | 16384 | Lightest, fastest |
 | **Muse Glimmer 30B** | 29.6B (dense) | K-quant (kquant-17gb) | ~16.8 GB | 16384 | Dense, not MoE — expect ~5-8 tok/s per the project's bandwidth math, well under the MoE models above. Repo ships **only K-quants**, no IQ-quant fallback, so it is **unverified against the Arc 140V k-quant crash** |
+| **Qwen3.8-27B** | 27B (dense) | Q4_K_M | ~17.7 GB | 16384 | **Served from LM Studio's folder**, not downloaded by this project — the entry that exercises the cross-tree path. Q4_K_M is a K-quant with no IQ fallback in that repo, so like Muse Glimmer it is **unverified against the Arc 140V k-quant crash**. Appears dense (no `A3B` marker), so expect the same ~5-8 tok/s penalty rather than MoE speed |
 
-You don't edit anything to switch between them. Both `./download-model.sh` and
-`./start-server.sh` open with the same menu, using the same numbering in each —
-so a given model is choice **6** in both places:
+You don't edit anything to switch between them. `./start-server.sh` opens with a
+numbered menu and serves whichever you pick:
 
 ```
 === Select a Model ===
@@ -239,21 +239,68 @@ so a given model is choice **6** in both places:
   7) Qwen3.6-35B-A3B Unc. ~3B active params, MoE (~19.0 GB)
   8) Qwen3.6-35B Genesis  ~3B active params, MoE (~17.4 GB)
   9) Muse Glimmer 30B     29.6B params, dense (~16.8 GB)
+ 10) Qwen3.8-27B  [LM Studio]  27B params, dense (~17.7 GB)
 
 Model [6]:
 ```
 
-Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside 1-9
-exits with an error rather than starting. So switching models is just:
+Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside the
+listed range exits with an error rather than starting.
+
+For models this project downloads itself, `./download-model.sh` uses the *same*
+numbering, so a given model is the same choice in both places:
 
 ```bash
 ./download-model.sh   # choose 5 → fetches Gemma 4 26B-A4B
 ./start-server.sh     # choose 5 → serves it
 ```
 
-All model files can coexist on disk (they have different filenames), so you only
-need `./download-model.sh` once per variant. From then on, switching is nothing
-more than restarting `./start-server.sh` and picking a different number.
+You only need `./download-model.sh` once per variant. From then on, switching is
+nothing more than restarting `./start-server.sh` and picking a different number.
+
+The one exception is entries marked **`[LM Studio]`**, which have no
+`download-model.sh` counterpart because LM Studio downloaded them — so the two
+menus are expected to diverge. See below.
+
+## Models from LM Studio
+
+Models don't all have to live in one folder. Each entry in `start-server.sh`'s
+menu carries its **own full path**, so it can serve a GGUF from anywhere:
+
+| Source | Where it lands |
+|--------|----------------|
+| `./download-model.sh` | `~/.local/share/llama.cpp/models/` — flat, one `.gguf` per model |
+| LM Studio | `~/.lmstudio/models/<publisher>/<repo>/<file>.gguf` |
+
+This works because `llama-server --model` accepts any path — llama.cpp, unlike
+LM Studio, has no opinion about directory layout. So there is nothing to copy,
+symlink, or migrate: one download serves both apps, wherever it happens to sit.
+
+The two roots are named at the top of `start-server.sh` and are overridable:
+
+```bash
+LMS_MODELS=/mnt/big/models ./start-server.sh
+```
+
+**Adding an LM Studio model — look up its path, don't guess it.** LM Studio picks
+the `<publisher>/<repo>` folder from its own catalog, and it does *not* match the
+model key shown in the app: Qwen3.8-27B displays as `qwen/qwen3.8-27b` but lives
+under `lmstudio-community/Qwen3.8-27B-GGUF/`. `lms ls --json` reports that same
+normalized key rather than a file path, so it can't answer this either. Look on
+disk:
+
+```bash
+find ~/.lmstudio/models -name '*.gguf' -printf '%T@ %p\n' | sort -rn | head -5
+```
+
+Then add a branch to `start-server.sh` setting `MODEL_PATH` to that path.
+`ai-prompts/install-new-model.md` has the full recipe.
+
+> **Watch your RAM if you use both apps.** LM Studio keeps a model resident for
+> an hour after last use by default, and its server is on port 1234 while this
+> one is on 8080 — so nothing collides and nothing warns you. Loading a ~17 GB
+> model here while LM Studio still holds one is ~35 GB on a 32 GB machine. See
+> [troubleshooting.md](troubleshooting.md).
 
 Because both scripts prompt, they need a real terminal — they can't be driven
 from cron or a pipe as-is.
@@ -469,15 +516,29 @@ binaries and model files live in separate trees:
 
 ```
 ~/.local/share/llama.cpp/models/    ← your .gguf files (many GB each)
+~/.lmstudio/models/                 ← .gguf files downloaded by LM Studio
 ~/.local/lib/llama.cpp*             ← llama.cpp program binaries only
 ```
 
-The setup scripts never write to `~/.local/share/`, so reinstalling llama.cpp at
-any version — as many times as you like — never costs you a model download.
+The setup scripts never write to `~/.local/share/` or to LM Studio's folder, so
+reinstalling llama.cpp at any version — as many times as you like — never costs
+you a model download.
 
 ## Backing Up Models
-Normally on Linux your models will be stored under folder `~/.local/share/llama.cpp/models/` 
-so if you want to backup all your models this is the folder to backup.
+On Linux your GGUF files live in **two** folders, depending on what downloaded
+them — back up both:
+
+```
+~/.local/share/llama.cpp/models/    ← fetched by ./download-model.sh
+~/.lmstudio/models/                 ← downloaded through LM Studio
+```
+
+If you've relocated LM Studio's folder from its settings, check where it actually
+points before trusting the second path:
+
+```bash
+jq -r .downloadsFolder ~/.lmstudio/settings.json
+```
 
 ## Customization
 

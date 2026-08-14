@@ -12,6 +12,10 @@
 #   ./start-server.sh off          # Start with reasoning off
 #   ./start-server.sh on --port 9090  # reasoning on + override port
 #
+# Models may live in more than one place: those fetched by ./download-model.sh,
+# and those downloaded through LM Studio. Every entry in the menu carries its own
+# full path, so both work identically — see the Model Locations block below.
+#
 # Backend (CPU vs GPU) is chosen via the BACKEND env var (default "gpu"):
 #   ./start-server.sh                    # run on the Intel Arc iGPU (Vulkan)
 #   BACKEND=cpu ./start-server.sh        # run on the CPU cores instead
@@ -33,7 +37,25 @@ if [[ "${1:-}" == "on" || "${1:-}" == "off" ]]; then
 fi
 # ─────────────────────────────────────────────────────────────────────────
 
-MODELS_DIR="$HOME/.local/share/llama.cpp/models"
+# ── Model Locations ──────────────────────────────────────────────────────
+# There is no single models directory anymore. Each entry in the menu below
+# sets its own full MODEL_PATH, so a model can live in either tree — or
+# anywhere else, by writing a literal absolute path in its branch.
+#
+# llama-server accepts any path for --model; unlike LM Studio it has no
+# opinion about directory layout. That is what makes this work at all.
+#
+#   LLAMA_MODELS — where download-model.sh puts things (flat: one .gguf each)
+#   LMS_MODELS   — LM Studio's tree, which nests as <publisher>/<repo>/<file>.gguf
+#
+# These two are conveniences, not a rule: they exist so that relocating a whole
+# tree is a one-line edit rather than one per model. LM Studio's folder in
+# particular is user-relocatable from its GUI (it is "downloadsFolder" in
+# ~/.lmstudio/settings.json), so if you move it there, change it here too — or
+# override without editing this file:  LMS_MODELS=/mnt/big/models ./start-server.sh
+LLAMA_MODELS="${LLAMA_MODELS:-$HOME/.local/share/llama.cpp/models}"
+LMS_MODELS="${LMS_MODELS:-$HOME/.lmstudio/models}"
+# ─────────────────────────────────────────────────────────────────────────
 
 # ── Backend Selection: CPU vs GPU (Vulkan / Intel Arc) ───────────────────
 # Choose which llama.cpp build to launch:
@@ -152,6 +174,7 @@ echo "  6) Qwen3.6-35B-A3B                          3B active params, MoE (~17.7
 echo "  7) Qwen3.6-35B-A3B Unc.                     3B active params, MoE (~19.0 GB)"
 echo "  8) Qwen3.6-35B Genesis Unc.                 3B active params, MoE (~17.4 GB)"
 echo "  9) Muse Glimmer 30B (WARNING: Slow ~3tps)   29.6B params, dense (~16.8 GB)"
+echo " 10) Qwen3.8-27B  [LM Studio]                27B params, dense (~17.7 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -159,17 +182,17 @@ echo ""
 case "${MODEL_CHOICE:-6}" in
   1)
     # Gemma 4 E2B: 2.3B effective params (~3.1 GB)
-    MODEL_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
+    MODEL_PATH="$LLAMA_MODELS/gemma-4-E2B-it-Q4_K_M.gguf"
     CTX_SIZE="16384"
     ;;
   2)
     # Gemma 4 E4B: 4.5B effective params (~5.0 GB)
-    MODEL_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
+    MODEL_PATH="$LLAMA_MODELS/gemma-4-E4B-it-Q4_K_M.gguf"
     CTX_SIZE="16384"
     ;;
   3)
     # Gemma 4 12B (dense): 12B params (~7.1 GB)
-    MODEL_FILE="gemma-4-12b-it-Q4_K_M.gguf"
+    MODEL_PATH="$LLAMA_MODELS/gemma-4-12b-it-Q4_K_M.gguf"
     CTX_SIZE="16384"
     ;;
   4)
@@ -178,7 +201,7 @@ case "${MODEL_CHOICE:-6}" in
     # standard Q4_K_M 12B build, with accuracy close to the original BF16.
     # In other words, this QAT model is "smarter" (better answers/inference) than
     # the non-QAT model above, but runs in about the same memory.
-    MODEL_FILE="gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
+    MODEL_PATH="$LLAMA_MODELS/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
     CTX_SIZE="16384"
     ;;
   5)
@@ -187,7 +210,7 @@ case "${MODEL_CHOICE:-6}" in
     # per token, so generation stays fast while quality is higher than the 12B.
     # Context kept at 8192 to leave memory headroom alongside the larger weights,
     # although there is reason to believe 16384 will alwo work on my hardware.
-    MODEL_FILE="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"
+    MODEL_PATH="$LLAMA_MODELS/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf"
     CTX_SIZE="8192"
     ;;
   6)
@@ -197,7 +220,7 @@ case "${MODEL_CHOICE:-6}" in
     # quality rivals a flagship coder. IQ4_XS avoids the known k-quant crash on the
     # Arc 140V iGPU, and a small prefill batch is the recommended Arc workaround
     # (see model-research/Qwen).
-    MODEL_FILE="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
+    MODEL_PATH="$LLAMA_MODELS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
     CTX_SIZE="16384"
     BATCH="256"
     ;;
@@ -212,7 +235,7 @@ case "${MODEL_CHOICE:-6}" in
     # NOTE: the model card recommends running with --jinja so llama.cpp picks up
     # this fine-tune's chat template. That is now handled globally by MODEL_ARGS
     # above (and is llama.cpp's own default on b10355), so nothing to do here.
-    MODEL_FILE="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
+    MODEL_PATH="$LLAMA_MODELS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"
     CTX_SIZE="16384"
     BATCH="256"
     ;;
@@ -242,7 +265,7 @@ case "${MODEL_CHOICE:-6}" in
     # See download-model.sh option 8 for why this quant was chosen, including the
     # caveat that APEX's GGML tensor types are undocumented — so unlike options 6
     # and 7 this file is NOT confirmed to dodge the Arc 140V k-quant crash.
-    MODEL_FILE="Hermes3.6-35B-A3B-Uncensored-Genesis-V7-APEX-Compact.gguf"
+    MODEL_PATH="$LLAMA_MODELS/Hermes3.6-35B-A3B-Uncensored-Genesis-V7-APEX-Compact.gguf"
     CTX_SIZE="16384"
     BATCH="256"
     ;;
@@ -275,7 +298,42 @@ case "${MODEL_CHOICE:-6}" in
     # NOTE: --jinja is required for this model — it ships a bespoke agentic
     # template using <atem:function_calls> tags. Applied globally in MODEL_ARGS
     # above, so the per-model assignment that was here has been removed.
-    MODEL_FILE="muse-glimmer-30B-kquant-17gb.gguf"
+    MODEL_PATH="$LLAMA_MODELS/muse-glimmer-30B-kquant-17gb.gguf"
+    CTX_SIZE="16384"
+    ;;
+  10)
+    # Qwen3.8-27B — the first entry served out of LM STUDIO's tree rather than
+    # llama-deck's own. Nothing about llama.cpp changes for this: llama-server
+    # takes any path for --model, so a model downloaded by LM Studio runs here
+    # exactly like one fetched by download-model.sh. There is deliberately NO
+    # matching entry in download-model.sh — see ai-prompts/install-new-model.md
+    # for why the two menus are no longer expected to line up.
+    #
+    # PATH NOTE: LM Studio picks the <publisher>/<repo> folder from its own
+    # catalog, and it does NOT match the model key the app displays — this model
+    # shows as "qwen/qwen3.8-27b" in the UI but sits under lmstudio-community/.
+    # `lms ls --json` reports that same normalized key rather than a file path,
+    # so it cannot be used to find the file. After downloading anything in
+    # LM Studio, look up where it actually landed before adding it here:
+    #   find "$LMS_MODELS" -name '*.gguf' -printf '%T@ %p\n' | sort -rn | head -5
+    #
+    # CAUTION #1 — this is a K-QUANT (Q4_K_M), and the Arc 140V iGPU has a known
+    # k-quant crash (see model-research/Qwen). Options 6 and 7 specifically chose
+    # IQ4_XS to dodge it; this file offers no such fallback. Treat the first
+    # launch as the test — and if it does crash on Vulkan, that is this bug and
+    # not the model path: confirm with BACKEND=cpu ./start-server.sh.
+    #
+    # CAUTION #2 — appears to be DENSE, not MoE: 27B params with no "A3B" marker
+    # in the name, ~17.7 GB on disk. If so, expect the same bandwidth-bound
+    # ~5-8 tok/s that option 9 warns about, not the fast MoE generation of
+    # options 6-8. BATCH is left at the default on purpose: the -b 256 tweak used
+    # by the A3B entries is an MoE-on-Vulkan prefill workaround, not something
+    # known to apply to a dense model.
+    #
+    # Vision: LM Studio also downloaded mmproj-Qwen3.8-27B-BF16.gguf alongside
+    # this file. Loading it would need --mmproj; as everywhere else in this
+    # script, we serve text-only weights.
+    MODEL_PATH="$LMS_MODELS/lmstudio-community/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_K_M.gguf"
     CTX_SIZE="16384"
     ;;
   *)
@@ -290,7 +348,9 @@ HOST="127.0.0.1"
 PORT="8080"
 # ─────────────────────────────────────────────────────────────────────────
 
-MODEL_PATH="$MODELS_DIR/$MODEL_FILE"
+# Each branch above set a full MODEL_PATH; derive the bare filename from it so
+# the startup banner stays readable rather than printing a long path twice.
+MODEL_FILE="$(basename "$MODEL_PATH")"
 
 # Allow CLI overrides (e.g., --port 9090)
 EXTRA_ARGS=("$@")
@@ -317,7 +377,17 @@ fi
 
 if [[ ! -f "$MODEL_PATH" ]]; then
   echo "ERROR: Model not found at $MODEL_PATH"
-  echo "Run ./download-model.sh first."
+  echo ""
+  if [[ "$MODEL_PATH" == "$LMS_MODELS"/* ]]; then
+    echo "  This model comes from LM Studio. It was most likely deleted from"
+    echo "  LM Studio's My Models tab, or the models folder was moved (LM Studio"
+    echo "  Settings → models directory). See what is actually there:"
+    echo "    find \"$LMS_MODELS\" -name '*.gguf'"
+    echo ""
+    echo "  If you moved the folder, update LMS_MODELS at the top of this script."
+  else
+    echo "  Run ./download-model.sh first, and pick the matching model."
+  fi
   exit 1
 fi
 
@@ -398,6 +468,7 @@ else
   echo "  Backend:      cpu"
 fi
 echo "  Model:        $MODEL_FILE"
+echo "  Model path:   $MODEL_PATH"
 echo "  Reasoning:    $REASONING"
 echo "  Context size: $CTX_SIZE"
 echo "  Flash-attn:   $FA"

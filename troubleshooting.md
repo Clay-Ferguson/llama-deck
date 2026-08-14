@@ -4,6 +4,56 @@ Problems that don't fit neatly into `README.md`'s own Troubleshooting section �
 usually because they're about the *process* of adding or updating a model
 rather than about running the scripts day to day.
 
+## Server hangs while loading, or gets OOM-killed (LM Studio is also running)
+
+### TL;DR
+
+LM Studio can be holding a model in RAM even when you aren't using it. Unload it
+before starting a large model here:
+
+```bash
+~/.lmstudio/bin/lms ps          # what LM Studio currently holds in memory
+~/.lmstudio/bin/lms unload --all
+```
+
+### Why it happens
+
+Since `start-server.sh` can serve models straight out of LM Studio's folder (see
+README § Models from LM Studio), both apps tend to be installed and both tend to
+be running. Nothing stops them loading a model at the same time:
+
+- **The ports don't collide.** LM Studio's server is on 1234, this one on 8080.
+  Neither app notices the other, so neither warns you.
+- **LM Studio keeps models resident after use.** Its JIT time-to-live defaults to
+  one hour (`jitModelTTL` in `~/.lmstudio/settings.json`), so a model you
+  finished chatting with 20 minutes ago may still be occupying RAM.
+
+On a 32 GB machine that arithmetic goes bad quickly: a ~17 GB model here plus a
+~17 GB model still parked in LM Studio is ~35 GB against 32 GB of shared
+LPDDR5X — with no discrete VRAM to fall back on, since the Arc 140V iGPU carves
+its memory out of the same pool.
+
+### What it looks like
+
+Not a clean error. Usually one of:
+
+- `start-server.sh` prints its banner and then sits there — `./status.sh` reports
+  `LOADING` far longer than the usual minute or so
+- the whole machine turns sluggish as it starts swapping
+- the server dies without explanation; `dmesg | tail` shows an `oom-kill` naming
+  `llama-server`
+
+If you suspect this, check total pressure rather than either app alone:
+
+```bash
+free -h                    # look at "available", not "free"
+~/.lmstudio/bin/lms ps
+```
+
+Note that `llama-server`'s own RSS is *not* a reliable read here — weights are
+mmap'd, so its process memory looks far smaller than the model actually is (the
+same caveat `status.sh` documents).
+
 ## ERROR: unknown model architecture
 
 RESOLUTION: This was ultimately fixed by upgrading to version 'b10355' on 8/10/26

@@ -108,10 +108,31 @@ if [[ "$SHOW_LATEST" == "1" ]]; then
 fi
 
 echo "Models (never touched by the setup scripts):"
-MODELS="$HOME/.local/share/llama.cpp/models"
-if [[ -d "$MODELS" ]]; then
-  echo "  $MODELS — $(du -sh "$MODELS" 2>/dev/null | cut -f1)"
-  ls -1 "$MODELS" 2>/dev/null | sed 's/^/    /'
+echo ""
+
+# Two trees, because start-server.sh can serve a model from either: the flat
+# folder download-model.sh writes to, and LM Studio's nested one. See the
+# Model Locations block in start-server.sh.
+LLAMA_MODELS="${LLAMA_MODELS:-$HOME/.local/share/llama.cpp/models}"
+LMS_MODELS="${LMS_MODELS:-$HOME/.lmstudio/models}"
+
+echo "  llama-deck (./download-model.sh):"
+if [[ -d "$LLAMA_MODELS" ]]; then
+  echo "    $LLAMA_MODELS — $(du -sh "$LLAMA_MODELS" 2>/dev/null | cut -f1)"
+  find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf' -printf '      %f\n' 2>/dev/null | sort
 else
-  echo "  $MODELS does not exist — run ./download-model.sh"
+  echo "    $LLAMA_MODELS does not exist — run ./download-model.sh"
+fi
+echo ""
+
+echo "  LM Studio:"
+if [[ -d "$LMS_MODELS" ]]; then
+  echo "    $LMS_MODELS — $(du -sh "$LMS_MODELS" 2>/dev/null | cut -f1)"
+  # Printed as <publisher>/<repo>/<file> — that relative path is exactly what a
+  # start-server.sh branch needs after "$LMS_MODELS/".
+  find "$LMS_MODELS" -name '*.gguf' 2>/dev/null \
+    | sed "s|^$LMS_MODELS/|      |" | sort
+else
+  echo "    $LMS_MODELS does not exist — LM Studio is not installed, or its"
+  echo "    models folder was moved (check: jq -r .downloadsFolder ~/.lmstudio/settings.json)"
 fi
