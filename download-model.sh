@@ -110,9 +110,12 @@ case "${MODEL_CHOICE:-6}" in
     #   MTP-APEX          26.6 GB  same problem
     #   Q8_K_P            43.6 GB  does not fit at all, and is a k-quant besides
     # The MTP builds carry an extra ~0.9 GB multi-token-prediction head, which
-    # only pays off under speculative decoding — and that is measured as actively
-    # *harmful* on this hardware (see SPEC in start-server.sh and
-    # PERFORMANCE_TUNING.md), so the extra memory would buy nothing here. Hence
+    # only pays off under speculative decoding — and that does not pay on an A3B
+    # MoE, whatever the hardware, because verifying k drafted tokens activates
+    # the union of their experts and so reads MORE weight than k separate steps
+    # would (see the SPEC block in start-server.sh for the full argument, and
+    # note that the opposite holds for the dense models). So the extra memory
+    # would buy nothing here. Hence
     # plain APEX-Compact, which is also the quant the model card recommends.
     #
     # CAUTION — NOT verified against the Arc 140V k-quant crash. Unlike options 6

@@ -222,7 +222,7 @@ Several model variants are supported:
 | **Gemma 4 E4B** | 4.5B effective (8B total) | Q4_K_M | ~5.0 GB | 16384 | Good balance |
 | **Gemma 4 E2B** | 2.3B effective (5.1B total) | Q4_K_M | ~3.1 GB | 16384 | Lightest, fastest |
 | **Muse Glimmer 30B** | 29.6B (dense) | K-quant (kquant-17gb) | ~16.8 GB | 16384 | Dense, not MoE — expect ~5-8 tok/s per the project's bandwidth math, well under the MoE models above. Repo ships **only K-quants**, no IQ-quant fallback, so it is **unverified against the Arc 140V k-quant crash** |
-| **Qwen3.8-27B** | 27B (dense) | Q4_K_M | ~16.8 GB | 16384 | **Served from LM Studio's folder**, not downloaded by this project. A K-quant with no IQ fallback, so it carried the Arc 140V k-quant crash risk — but it **runs fine on Vulkan** (confirmed 2026-08-14), which is useful evidence that the bug doesn't hit every K-quant. Dense, so expect ~5-8 tok/s rather than MoE speed. LM Studio reports this as ~17.7 GB because that figure includes the 0.93 GB mmproj; only the 16.8 GB of weights get loaded |
+| **Qwen3.8-27B** | 27B, dense FFN (hybrid SSM/attention) | Q4_K_M | ~16.8 GB | 16384 | **Served from LM Studio's folder**, not downloaded by this project. A K-quant with no IQ fallback, so it carried the Arc 140V k-quant crash risk — but it **runs fine on Vulkan** (confirmed 2026-08-14), useful evidence that the bug doesn't hit every K-quant. Architecture `qwen35`: of 65 blocks only 16 are attention, 48 are Mamba-style SSM, and block 64 is an MTP head — so it runs [speculative decoding](#speculative-decoding) for free, but the dense FFNs still put it at ~5-8 tok/s rather than MoE speed. KV cache is unusually cheap (~64 KiB/token, so 16384 ctx ≈ 1 GiB) since only 16 layers hold one. LM Studio reports ~17.7 GB because that figure includes the 0.93 GB mmproj; only the 16.8 GB of weights get loaded |
 | **Gemma 4 E2B** *(LM Studio copy)* | 2.3B effective (5.1B total) | Q4_K_M | ~3.4 GB | 16384 | **Same model as the Gemma 4 E2B row above**, packaged by `lmstudio-community` instead of `unsloth` — a separate conversion, ~320 MB larger, so output won't match byte-for-byte. Kept alongside option 1 for packager comparison; the most redundant model on the menu if you need disk back |
 
 You don't edit anything to switch between them. `./start-server.sh` opens with a
@@ -309,11 +309,22 @@ from cron or a pipe as-is.
 
 Per-model *settings* are not in the menu itself but in the `case` block just
 below it in `start-server.sh`. Each branch sets `CTX_SIZE`, and may override `FA`
-(flash-attention on/off) and `BATCH` (prefill batch size, `-b`); branches that
-omit those fall back to the defaults declared just above the menu (`FA="on"`,
-`BATCH=""`). At the moment the three Qwen3.6-35B-A3B branches are the only ones
-overriding anything — all three set `BATCH="256"` — and every model runs with
-flash-attention on.
+(flash-attention on/off), `BATCH` (prefill batch size, `-b`) and `SPEC`
+(speculative decoding, `--spec-type`); branches that omit those fall back to the
+defaults declared above the menu (`FA="on"`, `BATCH=""`, `SPEC="off"`). Two
+branches override something today:
+
+| Model | Override | Why |
+|-------|----------|-----|
+| Qwen3.6-35B-A3B (choices 6, 7, 8) | `BATCH="256"` | Arc 140V prefill workaround for A3B MoE on Vulkan |
+| Qwen3.8-27B (choice 10) | `SPEC="draft-mtp"` | Dense model with a built-in MTP head — see [Speculative Decoding](#speculative-decoding) |
+
+Every model runs with flash-attention on.
+
+`FA` and `BATCH` follow the rule that a per-model branch beats an environment
+variable. **`SPEC` is the deliberate exception** — an explicit `SPEC=` in the
+environment beats the branch, so that `SPEC=off ./start-server.sh` can A/B a
+branch's choice without editing the file.
 
 `MODEL_ARGS` is a separate array of extra `llama-server` flags needed to make a
 model work *correctly at all*, as distinct from the tuning knobs above. It is
@@ -352,8 +363,9 @@ keeping the numbering aligned between them (see `ai-prompts/`).
 > the two full `APEX` builds (25.7 / 26.6 GB) leave too little of the 32 GB for
 > the OS and KV cache, `Q8_K_P` (43.6 GB) does not fit at all, and the `MTP`
 > builds spend ~0.9 GB on a multi-token-prediction head that only pays off under
-> speculative decoding — which is harmful on this hardware (see the `SPEC` block
-> in `start-server.sh` and `PERFORMANCE_TUNING.md`).
+> speculative decoding — which does not pay on an A3B MoE, whatever the hardware
+> (see [Speculative Decoding](#speculative-decoding)). So the extra memory would
+> buy nothing here.
 >
 > **Choice 9 (Muse Glimmer 30B) carries two caveats of its own.** It is a dense
 > model, not MoE, so it reads all ~29.6B params every token; the bandwidth math
@@ -557,6 +569,97 @@ Common flags:
 - `--port N` — HTTP port (default: 8080)
 - `--ctx-size N` — Context window size in tokens (default: varies by model)
 - `--threads N` — CPU threads (default: auto-detect)
+- `--parallel N` — Request slots (default: 1; see [Request Slots](#request-slots))
 - `--n-gpu-layers N` — Offload layers to GPU (Vulkan/CUDA/ROCm builds; see [Vulkan Driver](#vulkan-driver))
 
 See `llama-server --help` for all options.
+
+### Environment overrides
+
+Everything tunable has an environment variable, so the common adjustments need
+no edit to `start-server.sh`:
+
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `BACKEND` | `gpu` | `cpu` or `gpu` — which build to launch ([Vulkan Driver](#vulkan-driver)) |
+| `NGL` | `99` | Layers offloaded to the GPU (99 = all) |
+| `THREADS` | `1` | Generation threads |
+| `THREADS_BATCH` | `8` | Prefill threads |
+| `FA` | `on` | Flash attention |
+| `BATCH` | *(model)* | Prefill batch size (`-b`) |
+| `SPEC` | `off` | Speculative decoding type ([below](#speculative-decoding)) |
+| `PARALLEL` | `1` | Request slots ([below](#request-slots)) |
+| `LLAMA_MODELS` | `~/.local/share/llama.cpp/models` | Where `download-model.sh` puts models |
+| `LMS_MODELS` | `~/.lmstudio/models` | LM Studio's model tree |
+
+### Request Slots
+
+A slot is one lane for an in-flight request. Left unset, llama.cpp picks for you
+and announces it at startup — `n_parallel is set to auto, using n_parallel = 4
+and kv_unified = true`. This project pins it to **1**, because the server backs a
+single-user chat UI.
+
+It is tempting to read "4 slots" as "4 KV caches" and assume dropping to 1
+reclaims three of them. It does not: `kv_unified` (which auto mode enables) means
+every sequence shares **one** pool of `--ctx-size` tokens, so on the transformer
+models the extra slots cost almost nothing, and each slot still sees the full
+context rather than a quarter of it.
+
+The saving is specific to **hybrid SSM models like choice 10**, whose recurrent
+state is *not* part of that shared pool. Those allocate a full state per
+sequence, sized by the model rather than by the context length — roughly 150 MB
+per slot for choice 10's 48 SSM layers. Auto's 4 slots therefore reserve ~600 MB
+to serve one chat that can only ever use ~150 MB; pinning to 1 hands ~450 MB
+back.
+
+The trade is that concurrent requests queue instead of running side by side. For
+one person typing in a chat box that is the right call — and arguably faster,
+since two generations would only compete for the same LPDDR5X bandwidth. If you
+drive this from something that fans requests out, raise it:
+
+```bash
+PARALLEL=4 ./start-server.sh
+```
+
+### Speculative Decoding
+
+`SPEC` selects a `--spec-type`. Whether it helps **depends on the model, not on
+the hardware** — an earlier version of these docs claimed speculation was simply
+harmful on this laptop, which is true of the MoE entries and false in general.
+The distinction is what decides the setting:
+
+- **MoE (choices 6-8)** — only ~3B of 35B params are read per token. Verifying
+  *k* drafted tokens in one batch activates the *union* of those tokens' experts,
+  so the step reads **more** weight than *k* separate steps would. The draft has
+  to be nearly always right just to break even, and it usually isn't. Leave it
+  off. (This is also why choice 8's `MTP` builds are not worth their extra
+  ~0.9 GB.)
+- **Dense (choices 9, 10)** — every param is read every token: ~17 GB against the
+  ~136 GB/s of LPDDR5X that sets the ~5-8 tok/s ceiling these entries warn about.
+  Verifying *k* drafted tokens reads that 17 GB exactly **once**, so every
+  accepted token is a whole weight-read saved. Here it is the largest single
+  lever available.
+
+Choice 10 is set up for this in the script: the model ships its own MTP
+(multi-token prediction) head — `qwen35.nextn_predict_layers = 1`, with the
+`blk.64.nextn.*` tensors already inside the 16.8 GB of weights — so
+`SPEC="draft-mtp"` needs no draft model and no extra download. It drafts with a
+head that is loaded either way.
+
+Two things to keep in mind:
+
+- **It is unverified, so treat the first run as the test.** A rejected draft has
+  to rewind the recurrent state of choice 10's 48 SSM layers, which is the one
+  place a hybrid model could misbehave where a plain transformer would not.
+  Confirm the gain with `./status.sh` — a model is not obliged to draft *well*
+  just because it can draft.
+- **An explicit `SPEC=` in the environment beats the per-model branch**, unlike
+  `FA` and `BATCH`. That exists precisely so you can A/B it:
+
+```bash
+SPEC=off ./start-server.sh    # override choice 10's draft-mtp
+```
+
+The `ngram-*` types are a different mechanism: self-speculative, no draft model,
+and they mainly help rewrite/edit-style tasks where the output repeats long runs
+of the input. Any other `--spec-type` value is passed through as-is.

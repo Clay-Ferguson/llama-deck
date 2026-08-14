@@ -75,33 +75,40 @@ NGL="${NGL:-99}"
 # SPEC selects a llama.cpp speculative-decoding type (--spec-type). Default
 # "off" changes nothing. The ngram-* types are self-speculative (no draft
 # model, no extra download) and mainly help rewrite/edit-style tasks where
-# the output repeats long runs of the input. See README § Speculative
-# Decoding for what applies (and doesn't) on this hardware.
+# the output repeats long runs of the input.
 #   SPEC=ngram-simple ./start-server.sh   # rewriting-oriented defaults
 #   SPEC=ngram-mod ./start-server.sh      # constant-memory variant
+#   SPEC=draft-mtp ./start-server.sh      # use a model's built-in MTP head
 # Any other --spec-type value is passed through as-is.
-# NOTE: For the hardware mentioned in README (Dell XPS Laptop) 
-#       speculative decoding is actually harmful to performance
-#       so leaving it off is the correct and the default option here
-#       for that particular hardware.
+#
+# WHETHER THIS HELPS DEPENDS ON THE MODEL, NOT ON THE HARDWARE. An earlier
+# note here said speculative decoding is simply harmful on this laptop. That
+# is true for the A3B MoE models (options 6-8) and false in general, and the
+# distinction is worth stating because it is what decides the setting:
+#
+#   MoE (options 6-8): only ~3B of 35B params are read per token. Verifying k
+#     drafted tokens in one batch activates the *union* of those tokens'
+#     experts, so the step reads MORE weight than k separate steps would. The
+#     draft has to be nearly always right just to break even. It usually isn't.
+#   Dense (options 9, 10): every param is read every token — ~17 GB against
+#     ~136 GB/s of LPDDR5X, which is the ~5-8 tok/s ceiling those options warn
+#     about. Verifying k drafted tokens reads that 17 GB exactly ONCE, so every
+#     accepted token is a whole weight-read saved. Here it is the single
+#     largest lever available.
+#
+# So this stays "off" as the global default (it is right for the default model
+# and every MoE entry), and a per-model branch turns it on where the economics
+# invert — see option 10.
+#
+# Unlike FA and BATCH, an explicit SPEC= in the environment WINS over a
+# per-model branch. That is deliberate: it is what lets you A/B a branch's
+# choice (`SPEC=off ./start-server.sh`) without editing this file.
+# A branch may therefore assign SPEC unconditionally; the value from the
+# environment is stashed here and reinstated after the menu.
+SPEC_ENV="${SPEC:-}"
 SPEC="${SPEC:-off}"
-
-SPEC_ARGS=()
-case "$SPEC" in
-  off) ;;
-  ngram-simple)
-    SPEC_ARGS=(--spec-type ngram-simple --spec-draft-n-max 64)
-    ;;
-  ngram-mod)
-    SPEC_ARGS=(--spec-type ngram-mod
-               --spec-ngram-mod-n-match 24
-               --spec-ngram-mod-n-min 48
-               --spec-ngram-mod-n-max 64)
-    ;;
-  *)
-    SPEC_ARGS=(--spec-type "$SPEC")
-    ;;
-esac
+# NOTE: SPEC is translated into SPEC_ARGS *below the model menu*, not here, so
+# that a per-model branch has a chance to set it first.
 
 case "$BACKEND" in
   cpu)
@@ -260,8 +267,9 @@ case "${MODEL_CHOICE:-6}" in
     # keep its thinking mode intact, but 128K of KV cache is far past what is
     # left of 32 GB once ~17.4 GB of weights are resident. 16384 matches the
     # other A3B entries and is what actually runs; long-form reasoning pays for
-    # it. Quantizing the KV cache is the lever that could buy more here — see
-    # PERFORMANCE_TUNING.md item 2.
+    # it. Quantizing the KV cache (--cache-type-k/v q8_0, which -fa on already
+    # makes available) is the lever that could buy more here, at the cost of a
+    # dequant step on every token.
     #
     # See download-model.sh option 8 for why this quant was chosen, including the
     # caveat that APEX's GGML tensor types are undocumented — so unlike options 6
@@ -326,12 +334,41 @@ case "${MODEL_CHOICE:-6}" in
     # k-quant bug does not hit every k-quant on this hardware. Option 9's warning
     # stands on its own; it has not been retested.
     #
-    # CAUTION — appears to be DENSE, not MoE: 27B params with no "A3B" marker in
-    # the name. Expect the same bandwidth-bound ~5-8 tok/s that option 9 warns
-    # about, not the fast MoE generation of options 6-8. BATCH is left at the
-    # default on purpose: the -b 256 tweak used by the A3B entries is an
-    # MoE-on-Vulkan prefill workaround, not something known to apply to a dense
-    # model.
+    # ARCHITECTURE — read from the GGUF header, not guessed from the name:
+    # general.architecture is "qwen35", a HYBRID of attention and Mamba-style
+    # SSM layers. Of its 65 blocks, only 16 are attention (indices 3, 7, 11 ...
+    # 63 — qwen35.full_attention_interval=4); 48 are SSM, and block 64 is an MTP
+    # head (see SPEC below). There are no expert tensors, so the FFNs are dense
+    # and the ~5-8 tok/s bandwidth ceiling option 9 warns about does apply.
+    # BATCH is left at the default on purpose: the -b 256 tweak used by the A3B
+    # entries is an MoE-on-Vulkan prefill workaround, not something known to
+    # apply here.
+    #
+    # Two things follow from the hybrid layout that are easy to get wrong:
+    #   - KV cache is CHEAP. Only 16 layers hold one, at 4 kv-heads x (256+256)
+    #     x 2 bytes = 64 KiB/token, so CTX_SIZE 16384 costs ~1 GiB rather than
+    #     the ~4 GiB a conventional dense 27B would. There is room to raise it.
+    #   - The 48 SSM layers carry a recurrent state instead, ~150 MB per slot,
+    #     and that cost is fixed regardless of CTX_SIZE.
+    #
+    # SPEC — this model ships its own MTP (multi-token prediction) head:
+    # qwen35.nextn_predict_layers=1, with the blk.64.nextn.* tensors already
+    # inside the 16.81 GB below. So draft-mtp needs no draft model and no extra
+    # download; it drafts with a head that is loaded either way. Being dense, it
+    # is exactly the case where speculation pays (see the Speculative Decoding
+    # block above for why that is the opposite of options 6-8). ggml-org's own
+    # published launch commands for this model use --spec-type draft-mtp on
+    # every hardware tier, from an RTX 5090 down to a DGX Spark, because the win
+    # is about memory bandwidth rather than GPU size — and this laptop is more
+    # bandwidth-starved than either.
+    #
+    # UNVERIFIED, so treat the first run as the test: a rejected draft has to
+    # rewind the recurrent state of those 48 SSM layers, which is the one place
+    # a hybrid model could misbehave where a plain transformer would not. If it
+    # errors or the output degrades, `SPEC=off ./start-server.sh` overrides this
+    # line without editing the file. Confirm the gain with ./status.sh either
+    # way — the model is not obliged to draft well just because it can draft.
+    SPEC="draft-mtp"
     #
     # SIZE — the weights are 16.81 GB. Note that LM Studio's own UI and
     # `lms ls` report ~17.7 GB for this model: that figure is the whole repo
@@ -375,9 +412,68 @@ case "${MODEL_CHOICE:-6}" in
 esac
 # ─────────────────────────────────────────────────────────────────────────
 
+# ── Speculative Decoding, resolved ───────────────────────────────────────
+# Deliberately down here rather than beside the SPEC docs above: the menu had
+# to run first so a per-model branch could set SPEC. An explicit SPEC= in the
+# environment is reinstated now, so it beats whatever the branch chose.
+[[ -n "$SPEC_ENV" ]] && SPEC="$SPEC_ENV"
+
+SPEC_ARGS=()
+case "$SPEC" in
+  off) ;;
+  ngram-simple)
+    SPEC_ARGS=(--spec-type ngram-simple --spec-draft-n-max 64)
+    ;;
+  ngram-mod)
+    SPEC_ARGS=(--spec-type ngram-mod
+               --spec-ngram-mod-n-match 24
+               --spec-ngram-mod-n-min 48
+               --spec-ngram-mod-n-max 64)
+    ;;
+  *)
+    SPEC_ARGS=(--spec-type "$SPEC")
+    ;;
+esac
+# ─────────────────────────────────────────────────────────────────────────
+
 # ── Server Configuration ─────────────────────────────────────────────────
 HOST="127.0.0.1"
 PORT="8080"
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── Request Slots (--parallel) ───────────────────────────────────────────
+# A "slot" is one lane for an in-flight request. Left unset, llama.cpp picks
+# for you, and it says so at startup:
+#   "n_parallel is set to auto, using n_parallel = 4 and kv_unified = true"
+# We pin it to 1 instead, because this server backs a single-user chat UI —
+# one person, one conversation at a time.
+#
+# WHAT THIS DOES NOT SAVE. It is tempting to assume 4 slots means 4 KV caches
+# and that dropping to 1 reclaims three of them. It does not: `kv_unified =
+# true` (which auto mode turns on) means all sequences share ONE pool of
+# --ctx-size tokens, so on the transformer models the extra slots cost nearly
+# nothing, and n_ctx_slot stays the full 16384 rather than being divided.
+# Setting --parallel 1 there is tidiness, not a memory win.
+#
+# WHAT IT DOES SAVE, and why it is worth pinning at all: recurrent state is
+# NOT part of that shared token pool. Hybrid SSM models allocate a full state
+# per sequence, sized by the model rather than by the context length, so it
+# scales with the slot count and nothing reclaims it. Option 10 is the case in
+# hand — 48 SSM layers at roughly 3.1 MB of state each is ~150 MB per slot, so
+# auto's 4 slots reserve ~600 MB to serve one chat that can only ever use
+# ~150 MB. Pinning to 1 hands ~450 MB back.
+#
+# THE TRADE: concurrent requests now queue instead of running side by side. For
+# one human typing in a chat box that is the right call — and arguably faster,
+# since two generations on this laptop would only fight each other for the same
+# LPDDR5X bandwidth. If you ever drive this from something that fans out
+# requests (a batch script, several browser tabs), raise it:
+#   PARALLEL=4 ./start-server.sh
+#
+# Note that passing this explicitly also flips kv_unified off, since that
+# defaulted on only *because* the slot count was auto. At one slot there is one
+# sequence, so unified vs. not is a distinction without a difference.
+PARALLEL="${PARALLEL:-1}"
 # ─────────────────────────────────────────────────────────────────────────
 
 # Each branch above set a full MODEL_PATH; derive the bare filename from it so
@@ -506,6 +602,7 @@ echo "  Context size: $CTX_SIZE"
 echo "  Flash-attn:   $FA"
 echo "  Prefill batch: ${BATCH:-default}"
 echo "  Threads:      $THREADS gen / $THREADS_BATCH batch"
+echo "  Slots:        $PARALLEL"
 echo "  Spec decoding: $SPEC"
 echo "  Model flags:  ${MODEL_ARGS[*]:-none}"
 echo "  Endpoint:     http://${HOST}:${PORT}"
@@ -538,6 +635,7 @@ exec "$SERVER_BIN" \
   "${BATCH_ARGS[@]}" \
   --threads "$THREADS" \
   --threads-batch "$THREADS_BATCH" \
+  --parallel "$PARALLEL" \
   "${GPU_ARGS[@]}" \
   "${SPEC_ARGS[@]}" \
   --reasoning "$REASONING" \
