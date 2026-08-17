@@ -12,6 +12,10 @@
 #   ./start-server.sh off          # Start with reasoning off
 #   ./start-server.sh on --port 9090  # reasoning on + override port
 #
+# After the model menu you are asked to pick a sampling mode (creative vs
+# factual). Answer it up front to run unattended:
+#   SAMPLING=factual ./start-server.sh
+#
 # Models may live in more than one place: those fetched by ./download-model.sh,
 # and those downloaded through LM Studio. Every entry in the menu carries its own
 # full path, so both work identically — see the Model Locations block below.
@@ -412,6 +416,124 @@ case "${MODEL_CHOICE:-6}" in
 esac
 # ─────────────────────────────────────────────────────────────────────────
 
+# ── Sampling Mode ────────────────────────────────────────────────────────
+# Asked AFTER the model menu because it is a per-run decision about the same
+# weights, not a property of the model: the identical GGUF answers differently
+# depending on how the next token is drawn from its probability distribution.
+#
+#   creative → --temperature 0.8 --min-p 0.05 --top-p 0.95 --top-k 0
+#     Temperature 0.8 flattens the distribution so lower-ranked tokens keep a
+#     real chance of being picked, which is what produces varied prose instead
+#     of the same sentence every time. top-k 0 DISABLES the top-k cutoff
+#     (llama.cpp's default is 40) so the candidate pool is bounded by
+#     probability mass (top-p/min-p) rather than by a fixed rank — the long
+#     tail stays reachable where it is genuinely plausible.
+#
+#   factual → --temperature 0.2 --min-p 0.05 --top-p 0.95 --top-k 0
+#     THE SAME SAMPLER STACK AS creative, WITH ONE KNOB MOVED: temperature.
+#     That is the point — 0.2 sharpens the distribution toward the argmax, so
+#     the model mostly says the most likely thing, while everything else stays
+#     mass-bounded rather than rank-bounded. Low-entropy but NOT greedy, which
+#     is what separates it from strict below: a little probability left on the
+#     alternatives is what lets a model take a different route through a
+#     problem instead of committing to a bad first step it can never leave.
+#     Use it for code, tool calls, extraction, multi-step reasoning, long
+#     technical explanations, and factual QA.
+#
+#     min-p 0.05 appears in both of the above — it drops any token below 5% of
+#     the top token's probability, the cheapest guard against a rare nonsense
+#     token, and it costs nothing once temperature is already low.
+#
+#   strict → --temperature 0.0 --seed 42 --repeat-penalty 1.05
+#     Absolute determinism. Temperature 0.0 is not "very low randomness", it is
+#     NO randomness: llama.cpp takes the argmax, so the truncation samplers
+#     (top-p/top-k/min-p) become irrelevant — whatever they leave in the pool,
+#     the single highest-probability token was always going to win. That is why
+#     none of them are passed here; passing them would only imply they matter.
+#     For code generation, JSON/YAML extraction, classification, and math, this
+#     is the mode where the same prompt gives the same answer twice.
+#
+#     --seed 42 is belt-and-braces rather than load-bearing, and it is worth
+#     knowing which: at temperature 0.0 the RNG is never consulted, so the seed
+#     changes nothing. It matters the moment something reintroduces randomness
+#     — an API client that sends its own "temperature" in the request body (see
+#     SERVER DEFAULTS below), or you editing this line. Pinning it means the run
+#     stays reproducible in that case instead of silently becoming a lottery.
+#     The value 42 is arbitrary; any fixed number does the same job.
+#
+#     --repeat-penalty 1.05 exists because greedy decoding is the case that
+#     degenerates into loops: with no randomness to break a tie, a model that
+#     starts repeating a phrase has nothing to stop it repeating that phrase
+#     forever. The penalty divides the logit of any token seen in the last
+#     --repeat-last-n tokens (default 64), making an exact rerun slightly less
+#     attractive. 1.05 is deliberately mild — llama.cpp's default is 1.0, i.e.
+#     off, and this is the one setting here that can actively HURT structured
+#     output, since JSON and code legitimately repeat braces, indentation, and
+#     field names. If a model starts mangling long JSON in this mode, that is
+#     the first knob to suspect: SAMPLING=factual is the same job without it.
+#
+# WHY THREE MODES AND NOT FOUR. A fourth "low-entropy reasoning" entry
+# (--temperature 0.2 --min-p 0.05 --top-p 0.95) was drafted and dropped: 0.95
+# is already llama.cpp's default top-p, so it would have sent llama-server a
+# configuration indistinguishable from factual's. Two menu items that produce
+# one behavior is a menu that lies. Its actual intent — low entropy without
+# greedy decoding's repetition traps — is what factual now is, and the lever
+# that makes that real is --top-k 0 (lifting the fixed rank-40 cutoff so
+# top-p/min-p alone bound the pool), which factual carries.
+#
+# NOTE ON FLAG SPELLING: this build takes --temp/--temperature, but the sampler
+# flags are hyphenated (--min-p, --top-p, --top-k, --repeat-penalty). The
+# underscore spellings seen in some model cards (--min_p, --top_p) are rejected
+# by llama-server here.
+#
+# These are SERVER DEFAULTS, not a ceiling: llama.cpp applies them only when a
+# request does not carry its own sampling fields. An API client that sends
+# "temperature" in the JSON body still wins for that request.
+#
+# Skip the prompt entirely from the environment (also what makes this script
+# usable non-interactively). Menu numbers and names are both accepted:
+#   SAMPLING=factual ./start-server.sh
+#   SAMPLING=3 ./start-server.sh          # same as SAMPLING=strict
+# (SAMPLING=reasoning is accepted as an alias for factual — see WHY THREE MODES
+# above — so a caller written against the dropped fourth entry still runs.)
+SAMPLING="${SAMPLING:-}"
+if [[ -z "$SAMPLING" ]]; then
+  echo "=== Select a Sampling Mode ==="
+  echo ""
+  echo "  1) Creative   temp 0.8  — varied prose, brainstorming, writing"
+  echo "  2) Factual    temp 0.2  — low-entropy but not greedy: code, tool"
+  echo "                            calls, extraction, multi-step reasoning,"
+  echo "                            long technical explanations, factual QA"
+  echo "  3) Strict     temp 0.0  — deterministic, same prompt same answer:"
+  echo "                            code gen, JSON/YAML extraction,"
+  echo "                            classification, precise math"
+  echo ""
+  read -rp "Mode [1]: " SAMPLING_CHOICE
+  echo ""
+  SAMPLING="${SAMPLING_CHOICE:-1}"
+fi
+
+case "$SAMPLING" in
+  1 | creative)
+    SAMPLING="creative"
+    SAMPLING_ARGS=(--temperature 0.8 --min-p 0.05 --top-p 0.95 --top-k 0)
+    ;;
+  2 | factual | reasoning)
+    SAMPLING="factual"
+    SAMPLING_ARGS=(--temperature 0.2 --min-p 0.05 --top-p 0.95 --top-k 0)
+    ;;
+  3 | strict)
+    SAMPLING="strict"
+    SAMPLING_ARGS=(--temperature 0.0 --seed 42 --repeat-penalty 1.05)
+    ;;
+  *)
+    echo "ERROR: Invalid sampling mode '$SAMPLING'"
+    echo "       (expected 1/creative, 2/factual, or 3/strict)."
+    exit 1
+    ;;
+esac
+# ─────────────────────────────────────────────────────────────────────────
+
 # ── Speculative Decoding, resolved ───────────────────────────────────────
 # Deliberately down here rather than beside the SPEC docs above: the menu had
 # to run first so a per-model branch could set SPEC. An explicit SPEC= in the
@@ -604,6 +726,7 @@ echo "  Prefill batch: ${BATCH:-default}"
 echo "  Threads:      $THREADS gen / $THREADS_BATCH batch"
 echo "  Slots:        $PARALLEL"
 echo "  Spec decoding: $SPEC"
+echo "  Sampling:     $SAMPLING (${SAMPLING_ARGS[*]})"
 echo "  Model flags:  ${MODEL_ARGS[*]:-none}"
 echo "  Endpoint:     http://${HOST}:${PORT}"
 echo "  API (OpenAI): http://${HOST}:${PORT}/v1"
@@ -638,6 +761,7 @@ exec "$SERVER_BIN" \
   --parallel "$PARALLEL" \
   "${GPU_ARGS[@]}" \
   "${SPEC_ARGS[@]}" \
+  "${SAMPLING_ARGS[@]}" \
   --reasoning "$REASONING" \
   "${MODEL_ARGS[@]}" \
   "${EXTRA_ARGS[@]}"
