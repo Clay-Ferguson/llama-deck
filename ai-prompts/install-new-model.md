@@ -6,7 +6,7 @@ Instructions to a Coding Agent for adding another model option to this project.
 > **MODEL:** `<name, e.g. Qwen3.6-35B-A3B>`  —  **REPO:** `<HuggingFace repo>`  —  **QUANT/FILE:** `<the .gguf filename>`
 > **SOURCE:** `<"LM Studio" if I already downloaded it there, or "download-model.sh" if it still needs fetching>`
 
-this project is the set of bash scripts that install and run a local LLM, which MkBrowser talks to for its AI features. there aren't many files here, so please read all of them first to get a full understanding of how things work — `README.md`, `download-model.sh`, `start-server.sh`, and anything relevant in `model-research/`.
+this project is the set of bash scripts that install and run a local LLM behind an OpenAI-compatible HTTP API. there aren't many files here, so please read all of them first to get a full understanding of how things work — `README.md`, `download-model.sh`, `start-server.sh`, and anything relevant in `model-research/`.
 
 the important thing to understand before you change anything: models are **not** switched by commenting and uncommenting variables anymore. both `download-model.sh` and `start-server.sh` present an interactive numbered menu and then branch on the answer in a `case` block.
 
@@ -27,6 +27,17 @@ what each branch needs to set:
 - **`download-model.sh`** — `MODEL_REPO`, `MODEL_FILE`, and `MODEL_SIZE_HINT`
 - **`start-server.sh`** — **`MODEL_PATH`** (the *full* path, not a bare filename) and `CTX_SIZE`, plus optional `FA` (flash-attention on/off) and `BATCH` (prefill batch size, `-b`) if this model needs something other than the defaults declared just above the menu. only override those if there's a documented reason, and put the reason in a comment.
 
+  also set **`REASONING_EFFORTS`** if — and only if — the model's own chat template implements named thinking levels, as a space-separated list of the exact strings the template accepts (option 10 is the only current example: `REASONING_EFFORTS="low medium xhigh"`). leaving it unset means the model knows thinking on/off only, which is the common case. **check this against the actual GGUF rather than assuming from the model family** — it is a property of the file. read the template out of the header and look for a `reasoning_effort` variable; the levels are usually listed in the template's own validation clause. quickest confirmation is to make a small model wear the new template and ask the server what it would send:
+
+  ```bash
+  llama-server -m small.gguf --jinja --chat-template-file extracted.jinja \
+    --chat-template-kwargs '{"reasoning_effort":"low"}' --port 8099 &
+  curl -s localhost:8099/apply-template -H 'Content-Type: application/json' \
+    -d '{"messages":[{"role":"user","content":"hi"}]}'
+  ```
+
+  a kwarg the template doesn't read is silently unused, so a wrong guess produces a menu entry that does nothing rather than an error — which is exactly why this gets verified rather than assumed.
+
 build `MODEL_PATH` from one of the two roots defined above the menu — `"$LLAMA_MODELS/<file>.gguf"` for anything `download-model.sh` fetches, `"$LMS_MODELS/<publisher>/<repo>/<file>.gguf"` for anything from LM Studio. a literal absolute path is fine too if the model lives somewhere else entirely.
 
 **finding the path of an LM Studio model — do not guess it.** LM Studio picks the `<publisher>/<repo>` folder from its own catalog and it does *not* match the model key shown in the app: Qwen3.8-27B displays as `qwen/qwen3.8-27b` but sits under `lmstudio-community/Qwen3.8-27B-GGUF/`. `lms ls --json` reports that same normalized key rather than a file path, so it cannot answer this either. look on disk instead, and copy the real path:
@@ -46,5 +57,6 @@ then update `README.md`:
 - add a row to the model table in the **Switching Models** section (params, quant, file size, context, notes)
 - update the menu listing quoted in that same section so it matches the real menu
 - move the **Current default** marker if the default changed
+- add a row to the per-model override table further down that section if the branch set `BATCH`, `SPEC`, or `REASONING_EFFORTS`, and mention effort levels in the **Reasoning** section if the new model has them
 
 finally, please let me know what I need to run to download and serve the new model, including which menu number to pick.

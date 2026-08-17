@@ -207,7 +207,7 @@ its own merits, independent of Muse Glimmer. What that settled:
 - Noted in passing: `b10344` warns that llama.cpp's **default server port will
   change from 8080 to 9931** in a future release. This project sets `PORT`
   explicitly in `start-server.sh`, so nothing breaks — but a future upgrade
-  will need `status.sh` and the MkBrowser base URL checked if that default is
+  will need `status.sh` and any client's base URL checked if that default is
   ever relied on.
 
 This is also a useful moment to re-check the **other** open caution on option

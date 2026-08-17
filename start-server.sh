@@ -2,19 +2,21 @@
 #
 # start-server.sh — Launch llama-server with a local GGUF model
 #
-# Starts the llama.cpp HTTP server on localhost:8080 with an
-# OpenAI-compatible API. MkBrowser connects to this endpoint
-# when using a LLAMACPP provider model.
+# Starts the llama.cpp HTTP server on localhost:8080 with an OpenAI-compatible
+# API, which any client speaking that protocol can point at.
 #
 # Usage:
-#   ./start-server.sh              # Start with defaults (reasoning off)
-#   ./start-server.sh on           # Start with reasoning on
-#   ./start-server.sh off          # Start with reasoning off
-#   ./start-server.sh on --port 9090  # reasoning on + override port
+#   ./start-server.sh              # Start; menus ask for model, reasoning, sampling
+#   ./start-server.sh --port 9090  # same, overriding a llama-server flag
 #
-# After the model menu you are asked to pick a sampling mode (creative vs
-# factual). Answer it up front to run unattended:
-#   SAMPLING=factual ./start-server.sh
+# Every argument is passed straight through to llama-server, so anything in
+# `llama-server --help` can be overridden on the command line.
+#
+# After the model menu you are asked two more questions: how much reasoning
+# (thinking) the model should do, and which sampling mode to use (creative vs
+# factual). Answer either up front to run unattended:
+#   REASONING=off SAMPLING=factual ./start-server.sh
+#   REASONING=low ./start-server.sh     # effort level, where the model has them
 #
 # Models may live in more than one place: those fetched by ./download-model.sh,
 # and those downloaded through LM Studio. Every entry in the menu carries its own
@@ -23,7 +25,7 @@
 # Backend (CPU vs GPU) is chosen via the BACKEND env var (default "gpu"):
 #   ./start-server.sh                    # run on the Intel Arc iGPU (Vulkan)
 #   BACKEND=cpu ./start-server.sh        # run on the CPU cores instead
-#   BACKEND=cpu ./start-server.sh on     # CPU + reasoning on
+#   BACKEND=cpu REASONING=on ./start-server.sh   # CPU + reasoning on
 # (The default GPU mode requires ./setup-with-vulkan.sh to have been run first;
 #  ./setup.sh alone installs only the CPU build.)
 #
@@ -31,14 +33,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Reasoning Mode ───────────────────────────────────────────────────────
-# Optional first argument: "on" or "off" (controls --reasoning). Defaults
-# to "off". MkBrowser passes "on" when Agentic Mode is enabled.
-REASONING="off"
-if [[ "${1:-}" == "on" || "${1:-}" == "off" ]]; then
-  REASONING="$1"
-  shift
-fi
+# ── Reasoning Mode: the answer is collected below, not here ──────────────
+# Reasoning is chosen from a menu shown AFTER the model menu, because what can be
+# asked depends on which model was picked — see the Reasoning Mode block further
+# down for the whole story.
+#
+# All that happens here is picking up an answer from the environment so the menu
+# can be skipped, which is what makes the script usable non-interactively. This
+# matches SAMPLING's pattern exactly:
+#   REASONING=low ./start-server.sh
+REASONING_CHOICE="${REASONING:-}"
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── Model Locations ──────────────────────────────────────────────────────
@@ -151,6 +155,15 @@ esac
 # one for that specific model.
 FA="${FA:-on}"
 BATCH="${BATCH:-}"
+
+# REASONING_EFFORTS — which named reasoning/thinking *levels* this model's own
+# chat template understands, as a space-separated list. Empty (the default) means
+# the model only knows thinking on vs. off, which is the case for every entry
+# here except option 10. It is NOT env-overridable on purpose: it is a fact about
+# the GGUF's embedded template, not a preference, and claiming a level a template
+# does not implement would only get you a jinja exception at request time.
+# See the Reasoning Mode block below the menu for how to read it out of a model.
+REASONING_EFFORTS=""
 
 # MODEL_ARGS — extra llama-server flags applied to every model, plus any a single
 # model requires in order to work correctly at all (as opposed to FA/BATCH, which
@@ -374,6 +387,25 @@ case "${MODEL_CHOICE:-6}" in
     # way — the model is not obliged to draft well just because it can draft.
     SPEC="draft-mtp"
     #
+    # REASONING — this is the ONE model in the menu with graduated thinking
+    # levels rather than a thinking on/off switch, which is why the reasoning
+    # menu below has more entries when this option is chosen. Its template reads
+    # a `reasoning_effort` variable and validates it itself:
+    #
+    #   {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+    #   {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
+    #       {{- raise_exception('Unexpected reasoning effort ...') }}
+    #
+    # So the levels are literally 'low', 'medium', 'xhigh' — there is NO 'high',
+    # and 'xhigh' is the default when thinking is on and nothing is passed. The
+    # mechanism is plain prompting: low and xhigh each prepend a sentence of
+    # instruction to the system message ("Keep your thinking brief and focused"
+    # / "think carefully through the task, validate key assumptions..."), while
+    # medium deliberately injects NOTHING and is the un-nudged baseline. Nothing
+    # here caps the thinking length by force; see --reasoning-budget below for
+    # the lever that does.
+    REASONING_EFFORTS="low medium xhigh"
+    #
     # SIZE — the weights are 16.81 GB. Note that LM Studio's own UI and
     # `lms ls` report ~17.7 GB for this model: that figure is the whole repo
     # folder, weights plus the 0.93 GB mmproj below. Only the weights are loaded
@@ -414,6 +446,138 @@ case "${MODEL_CHOICE:-6}" in
     exit 1
     ;;
 esac
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── Reasoning Mode ───────────────────────────────────────────────────────
+# Asked AFTER the model menu because the available answers depend on the model:
+# most entries here can only turn thinking on or off, while option 10 has three
+# named effort levels. The menu below shows the levels only when the selected
+# model actually implements them (REASONING_EFFORTS, set in its branch above).
+#
+# TWO SEPARATE MECHANISMS, and it is worth being precise about which is which,
+# because only the first is a llama.cpp feature at all:
+#
+#   ON / OFF is llama-server's own --reasoning [on|off|auto] flag. It sets the
+#     `enable_thinking` variable that essentially every thinking model's chat
+#     template reads. "off" does not merely ask the model not to think — the
+#     template emits a CLOSED, EMPTY thought block ("<think>\n\n</think>") as
+#     part of the assistant prefix, so the model resumes after a thought it
+#     never had and cannot open a new one. That is why it is the fastest
+#     setting: zero thinking tokens, not fewer.
+#
+#   LOW / MEDIUM / HIGH is NOT a llama.cpp feature. There is no --reasoning-level
+#     flag; llama-server's --reasoning takes only on/off/auto. The levels live
+#     inside the model's own chat template, which reads a `reasoning_effort`
+#     variable, and we reach it through the generic --chat-template-kwargs
+#     escape hatch. Their effect is therefore prompting, not decoding: the
+#     template prepends a sentence of instruction to the system message. So a
+#     level is a request the model can ignore, unlike off, which it cannot.
+#
+# WHICH MODELS HAVE LEVELS. Only option 10 (Qwen3.8-27B), whose levels are
+# 'low', 'medium', 'xhigh' — note there is no 'high', and that its `medium`
+# injects no instruction at all, being the un-nudged baseline. Every other model
+# in this menu ships a template with `enable_thinking` and nothing else (Muse
+# Glimmer, option 9, has neither). Don't take that on faith when adding a model —
+# read it out of the GGUF, since this is a property of the file, not of the
+# model family. The template is metadata, so a quick way to see it rendered is
+# to make the *small* model wear the big one's template and ask the server what
+# it would send:
+#   llama-server -m <small>.gguf --jinja --chat-template-file <extracted>.jinja \
+#     --chat-template-kwargs '{"reasoning_effort":"low"}' --port 8099 &
+#   curl -s localhost:8099/apply-template -H 'Content-Type: application/json' \
+#     -d '{"messages":[{"role":"user","content":"hi"}]}'
+# Passing a key a template does not read is harmless — it is simply unused — so
+# the risk of a wrong guess is a setting that silently does nothing, which is
+# exactly why REASONING_EFFORTS is declared per model rather than assumed.
+#
+# Answers are the same names in the menu, the environment, and the banner, so
+# nothing has to be translated between them:
+#   REASONING=off ./start-server.sh
+#   REASONING=low ./start-server.sh     # or 3, the menu number
+# Numbering is deliberately stable across models — 3 is always "low", even for a
+# model that has no levels — so a saved command line keeps its meaning when you
+# switch models. Ask a model for a level it does not implement and you get a
+# note and plain "on" rather than a failure.
+if [[ -z "$REASONING_CHOICE" ]]; then
+  echo "=== Select a Reasoning Mode ==="
+  echo ""
+  echo "  1) No reasoning   thinking suppressed entirely — fastest, fewest tokens"
+  echo "  2) Reasoning on   the model's own default thinking depth"
+  if [[ -n "$REASONING_EFFORTS" ]]; then
+    echo "  3) Low            think briefly, move straight to the conclusion"
+    echo "  4) Medium         think, with no instruction either way (baseline)"
+    echo "  5) High           think carefully: check assumptions, weigh alternatives"
+    echo ""
+    echo "     3-5 set this model's reasoning_effort. 5 is its 'xhigh', which is"
+    echo "     also what 2 gives you, that being the template's own default."
+  else
+    echo ""
+    echo "     This model's chat template knows thinking on/off only; it has no"
+    echo "     effort levels. (Option 10 is the one that does.)"
+  fi
+  echo ""
+  read -rp "Reasoning [1]: " REASONING_INPUT
+  echo ""
+  REASONING_CHOICE="${REASONING_INPUT:-1}"
+fi
+
+REASONING_EFFORT=""
+case "$REASONING_CHOICE" in
+  1 | off | none)    REASONING="off" ;;
+  2 | on)            REASONING="on" ;;
+  3 | low)           REASONING="on"; REASONING_EFFORT="low" ;;
+  4 | medium | med)  REASONING="on"; REASONING_EFFORT="medium" ;;
+  5 | high | xhigh)  REASONING="on"; REASONING_EFFORT="xhigh" ;;
+  *)
+    echo "ERROR: Invalid reasoning mode '$REASONING_CHOICE'"
+    echo "       (expected 1/off, 2/on, 3/low, 4/medium, or 5/high)."
+    exit 1
+    ;;
+esac
+
+REASONING_ARGS=()
+if [[ -n "$REASONING_EFFORT" ]]; then
+  if [[ " $REASONING_EFFORTS " == *" $REASONING_EFFORT "* ]]; then
+    REASONING_ARGS=(--chat-template-kwargs "{\"reasoning_effort\":\"$REASONING_EFFORT\"}")
+  else
+    echo "NOTE: this model's template has no '$REASONING_EFFORT' reasoning level"
+    echo "      (${REASONING_EFFORTS:-it supports on/off only}), so reasoning is"
+    echo "      simply on, at whatever depth the model does by default."
+    echo ""
+    REASONING_EFFORT=""
+  fi
+fi
+
+# ── Reasoning Budget (optional, and model-agnostic) ──────────────────────
+# The hard cap the effort levels above are not: --reasoning-budget N ends the
+# thought after N tokens by injecting the closing tag, whatever the model wanted
+# to do. Unlike reasoning_effort this needs no cooperation from the template, so
+# it is the nearest thing to a "shorter thinking" control on the models that
+# have no levels — at the cost of being a guillotine rather than an instruction,
+# so a thought can be cut mid-sentence. Off by default (-1, unrestricted):
+#   REASONING_BUDGET=512 ./start-server.sh
+# Only meaningful with reasoning on; with mode 1 there is no thought to bound.
+REASONING_BUDGET="${REASONING_BUDGET:-}"
+if [[ -n "$REASONING_BUDGET" ]]; then
+  if [[ "$REASONING" == "on" ]]; then
+    REASONING_ARGS+=(--reasoning-budget "$REASONING_BUDGET")
+  else
+    echo "NOTE: REASONING_BUDGET=$REASONING_BUDGET ignored — reasoning is off."
+    echo ""
+    REASONING_BUDGET=""
+  fi
+fi
+
+# What the startup banner prints: the mode, plus the level when there is one.
+if [[ -n "$REASONING_EFFORT" ]]; then
+  REASONING_LABEL="on (effort: $REASONING_EFFORT)"
+else
+  REASONING_LABEL="$REASONING"
+fi
+[[ -n "$REASONING_BUDGET" ]] && REASONING_LABEL+=", budget $REASONING_BUDGET"
+
+# As with sampling, all of this sets SERVER DEFAULTS. A client that sends its own
+# "chat_template_kwargs" in the request body still wins for that request.
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── Sampling Mode ────────────────────────────────────────────────────────
@@ -660,8 +824,8 @@ if command -v ss >/dev/null 2>&1 && llama_port_listening "$HOST" "$PORT"; then
   echo ""
 
   if curl -sf -m 5 "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
-    echo "  A healthy llama-server is already listening there. To use it, set the"
-    echo "  llama.cpp Base URL in MkBrowser Settings to:"
+    echo "  A healthy llama-server is already listening there. To use it, point"
+    echo "  your client at:"
     echo "    http://localhost:${PORT}/v1"
     echo ""
     echo "  ./status.sh      # model, slots, and a test inference"
@@ -719,7 +883,7 @@ else
 fi
 echo "  Model:        $MODEL_FILE"
 echo "  Model path:   $MODEL_PATH"
-echo "  Reasoning:    $REASONING"
+echo "  Reasoning:    $REASONING_LABEL"
 echo "  Context size: $CTX_SIZE"
 echo "  Flash-attn:   $FA"
 echo "  Prefill batch: ${BATCH:-default}"
@@ -728,16 +892,13 @@ echo "  Slots:        $PARALLEL"
 echo "  Spec decoding: $SPEC"
 echo "  Sampling:     $SAMPLING (${SAMPLING_ARGS[*]})"
 echo "  Model flags:  ${MODEL_ARGS[*]:-none}"
-echo "  Endpoint:     http://${HOST}:${PORT}"
-echo "  API (OpenAI): http://${HOST}:${PORT}/v1"
-echo ""
-echo "  In MkBrowser Settings, set the llama.cpp Base URL to:"
-echo "  http://localhost:${PORT}/v1"
+echo "  Endpoint:     http://${HOST}:${PORT}  (built-in chat UI)"
+echo "  API (OpenAI): http://${HOST}:${PORT}/v1  (base URL for API clients)"
 echo ""
 echo "Press Ctrl+C to stop the server."
 echo ""
 
-# Write PID file so stop-server.sh (and MkBrowser) can find us.
+# Write PID file so stop-server.sh can find us.
 # exec replaces this shell, so $$ will be the llama-server PID.
 #
 # This is a hint, not the source of truth: stop-server.sh prefers the listening
@@ -763,5 +924,6 @@ exec "$SERVER_BIN" \
   "${SPEC_ARGS[@]}" \
   "${SAMPLING_ARGS[@]}" \
   --reasoning "$REASONING" \
+  "${REASONING_ARGS[@]}" \
   "${MODEL_ARGS[@]}" \
   "${EXTRA_ARGS[@]}"

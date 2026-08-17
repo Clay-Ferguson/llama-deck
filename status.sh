@@ -200,4 +200,4 @@ else
 fi
 row "Round trip" "${ELAPSED}s"
 echo ""
-echo "  Inference works. MkBrowser can talk to this server at $BASE/v1"
+echo "  Inference works. API clients can talk to this server at $BASE/v1"

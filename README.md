@@ -1,7 +1,7 @@
 # Llama Deck (llama.cpp-based Local LLM Backend)
 
-Run local LLM models using [llama.cpp](https://github.com/ggml-org/llama.cpp). llama.cpp provides an OpenAI-compatible HTTP API, which
-MkBrowser connects to via the `LLAMACPP` provider. The scripts in this project can be used to run any `LLAMA.CPP` model locally on your own hardware 
+Run local LLM models using [llama.cpp](https://github.com/ggml-org/llama.cpp). llama.cpp provides an OpenAI-compatible HTTP API, so any
+client that speaks that protocol can point at it. The scripts in this project can be used to run any `LLAMA.CPP` model locally on your own hardware 
 the actual models that are listed (inactive ones commented out) are the ones selected because they run on the machine the developer of this project
 uses which is a **Dell XPS laptop with an Intel Core Ultra 9 288V (Lunar Lake) running Ubuntu Linux**, which pairs 8 CPU cores with an **Intel Arc 140V integrated GPU** and 
 **32 GB of on-package "unified" LPDDR5X memory**. So as long as you have a hardware equal to or better than this you can easily run all
@@ -31,13 +31,13 @@ to your specific hardware.
 "Vulkan build not found." To run on the CPU build instead, set the backend
 explicitly: `BACKEND=cpu ./start-server.sh` (see [Vulkan Driver](#vulkan-driver)).
 
-Then in MkBrowser **Settings → AI**:
-- Select the **llama.cpp** model
-- Verify the **llama.cpp Base URL** is `http://localhost:8080/v1`
+The server is then up at **http://localhost:8080**, with the OpenAI-compatible
+API at **http://localhost:8080/v1** — that `/v1` is the base URL to give any API
+client. To just chat with the model, open the first URL in a browser (see below).
 
 ## Web UI (Browser Chat)
 
-You don't need MkBrowser — or any extra app — just to confirm the model is up.
+You don't need any extra app to confirm the model is up.
 `llama-server` ships with a **built-in chat web app**, served from the same
 host and port as the API. Once `./start-server.sh` is running, open:
 
@@ -64,8 +64,8 @@ changing the port moves both. If something else on your machine is already using
 Then open **http://localhost:9090** for the UI. (This is just the `--port N`
 override described under [Customization](#server-parameters).)
 
-If you change the port, update MkBrowser to match in **Settings → AI** by
-setting the **llama.cpp Base URL** to `http://localhost:9090/v1`.
+If you change the port, update any API client to match — its base URL becomes
+`http://localhost:9090/v1`.
 
 ## Prerequisites
 
@@ -198,7 +198,7 @@ crash, and nothing is wrong with your model or install.
 
 `start-server.sh` now checks the port *before* it starts, so you'll get a clear
 message instead of this error. Run `./status.sh` to see what's there. If it's a
-healthy server, you can just use it (point MkBrowser at
+healthy server, you can just use it (point your client at
 `http://localhost:8080/v1`); otherwise `./stop-server.sh` and start again, or run
 the new one on another port with `./start-server.sh --port 9090`.
 
@@ -248,6 +248,10 @@ Model [6]:
 
 Press Enter to take the default (**6**, Qwen3.6-35B-A3B); anything outside the
 listed range exits with an error rather than starting.
+
+Two more menus follow it — [reasoning](#reasoning) and sampling — because both
+are per-run decisions about the same weights rather than properties of the model.
+Set `REASONING=` / `SAMPLING=` to answer either up front and skip its prompt.
 
 For models this project downloads itself, `./download-model.sh` uses the *same*
 numbering, so a given model is the same choice in both places:
@@ -310,21 +314,26 @@ from cron or a pipe as-is.
 Per-model *settings* are not in the menu itself but in the `case` block just
 below it in `start-server.sh`. Each branch sets `CTX_SIZE`, and may override `FA`
 (flash-attention on/off), `BATCH` (prefill batch size, `-b`) and `SPEC`
-(speculative decoding, `--spec-type`); branches that omit those fall back to the
-defaults declared above the menu (`FA="on"`, `BATCH=""`, `SPEC="off"`). Two
-branches override something today:
+(speculative decoding, `--spec-type`) and `REASONING_EFFORTS` (which named
+thinking levels its template implements); branches that omit those fall back to
+the defaults declared above the menu (`FA="on"`, `BATCH=""`, `SPEC="off"`,
+`REASONING_EFFORTS=""`). Two branches override something today:
 
 | Model | Override | Why |
 |-------|----------|-----|
 | Qwen3.6-35B-A3B (choices 6, 7, 8) | `BATCH="256"` | Arc 140V prefill workaround for A3B MoE on Vulkan |
 | Qwen3.8-27B (choice 10) | `SPEC="draft-mtp"` | Dense model with a built-in MTP head — see [Speculative Decoding](#speculative-decoding) |
+| Qwen3.8-27B (choice 10) | `REASONING_EFFORTS="low medium xhigh"` | The only model here whose template has graduated thinking levels — see [Reasoning](#reasoning) |
 
 Every model runs with flash-attention on.
 
 `FA` and `BATCH` follow the rule that a per-model branch beats an environment
 variable. **`SPEC` is the deliberate exception** — an explicit `SPEC=` in the
 environment beats the branch, so that `SPEC=off ./start-server.sh` can A/B a
-branch's choice without editing the file.
+branch's choice without editing the file. `REASONING_EFFORTS` is outside that
+rule entirely — it has no environment override, because it states a fact about
+the GGUF's template rather than a preference. What you *choose* from it is
+`REASONING=`, which does read the environment.
 
 `MODEL_ARGS` is a separate array of extra `llama-server` flags needed to make a
 model work *correctly at all*, as distinct from the tuning knobs above. It is
@@ -588,9 +597,77 @@ no edit to `start-server.sh`:
 | `FA` | `on` | Flash attention |
 | `BATCH` | *(model)* | Prefill batch size (`-b`) |
 | `SPEC` | `off` | Speculative decoding type ([below](#speculative-decoding)) |
+| `REASONING` | *(menu)* | Skip the reasoning menu: `off`, `on`, `low`, `medium`, `high` ([below](#reasoning)) |
+| `REASONING_BUDGET` | *(none)* | Hard token cap on thinking ([below](#reasoning)) |
+| `SAMPLING` | *(menu)* | Skip the sampling menu: `creative`, `factual`, `strict` |
 | `PARALLEL` | `1` | Request slots ([below](#request-slots)) |
 | `LLAMA_MODELS` | `~/.local/share/llama.cpp/models` | Where `download-model.sh` puts models |
 | `LMS_MODELS` | `~/.lmstudio/models` | LM Studio's model tree |
+
+### Reasoning
+
+After the model menu, `start-server.sh` asks how much thinking the model should
+do. What it offers depends on the model you just picked:
+
+```
+=== Select a Reasoning Mode ===
+
+  1) No reasoning   thinking suppressed entirely — fastest, fewest tokens
+  2) Reasoning on   the model's own default thinking depth
+  3) Low            think briefly, move straight to the conclusion
+  4) Medium         think, with no instruction either way (baseline)
+  5) High           think carefully: check assumptions, weigh alternatives
+```
+
+Entries **3-5 appear only for models that actually implement effort levels** —
+today that is **Qwen3.8-27B (choice 10) alone**. Every other model in the menu
+shows just 1 and 2, with a line saying so. The numbering is stable either way, so
+`REASONING=low` keeps its meaning when you switch models; ask a model for a level
+it doesn't have and you get a note plus plain "on", not a failure.
+
+**On/off and the levels are different mechanisms**, which is why one is
+guaranteed and the other is a request:
+
+| | Flag | What it really does |
+|---|---|---|
+| **Off** | `--reasoning off` | llama.cpp's own flag. Sets `enable_thinking` false, and the template emits a **closed, empty** `<think></think>` in the assistant prefix — so the model resumes after a thought it never had and can't open a new one. Zero thinking tokens, not fewer |
+| **On** | `--reasoning on` | Thinking at whatever depth the model does by default |
+| **Low / Medium / High** | `--chat-template-kwargs '{"reasoning_effort":"..."}'` | **Not a llama.cpp feature** — there is no reasoning-level flag; `--reasoning` takes only `on`/`off`/`auto`. The levels live in the *model's own chat template*, reached through the generic kwargs escape hatch. The template prepends a sentence of instruction to the system message, so the effect is prompting, and the model may ignore it |
+
+Qwen3.8-27B's levels are literally `low`, `medium`, `xhigh` — **there is no
+`high`** (the menu's "High" sends `xhigh`), and `xhigh` is also what "On" gives
+you, being the template's default. Its `medium` deliberately injects *no*
+instruction and is the un-nudged baseline.
+
+`REASONING_BUDGET=N` is the blunt instrument the levels are not: it ends the
+thought after N tokens by force, needs no cooperation from the template, and so
+is the nearest thing to a "think less" control on models with no levels — at the
+cost of possibly cutting a thought mid-sentence.
+
+```bash
+REASONING=low ./start-server.sh          # Qwen3.8-27B: brief thinking
+REASONING=off ./start-server.sh          # any model: no thinking at all
+REASONING_BUDGET=512 ./start-server.sh   # any model: hard cap on the thought
+```
+
+**Adding a model?** Whether it has levels is a property of that *GGUF's embedded
+template*, not of the model family, so read it rather than assuming — then set
+`REASONING_EFFORTS` in its branch (space-separated, empty for on/off only). The
+quickest check is to make a small model wear the new one's template and ask the
+server what it would send:
+
+```bash
+llama-server -m small.gguf --jinja --chat-template-file extracted.jinja \
+  --chat-template-kwargs '{"reasoning_effort":"low"}' --port 8099 &
+curl -s localhost:8099/apply-template -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hi"}]}'
+```
+
+A kwarg a template doesn't read is simply unused, so a wrong guess costs you a
+setting that silently does nothing — which is why the list is declared per model.
+
+Everything here sets *server defaults*. A client that sends its own
+`chat_template_kwargs` in the request body still wins for that request.
 
 ### Request Slots
 
