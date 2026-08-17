@@ -422,7 +422,7 @@ SPEC_ARGS=()
 case "$SPEC" in
   off) ;;
   ngram-simple)
-    SPEC_ARGS=(--spec-type ngram-simple --spec-draft-n-max 64)
+    SPEC_ARGS=(--spec-type ngram-simple --spec-draft-n-min 2 --spec-draft-n-max 12)
     ;;
   ngram-mod)
     SPEC_ARGS=(--spec-type ngram-mod
