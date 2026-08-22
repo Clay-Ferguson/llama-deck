@@ -200,6 +200,8 @@ echo "  8) Qwen3.6-35B Genesis Unc.                 3B active params, MoE (~17.4
 echo "  9) Muse Glimmer 30B (WARNING: Slow ~3tps)   29.6B params, dense (~16.8 GB)"
 echo " 10) Qwen3.8-27B  [LM Studio]                 27B params, dense (~16.8 GB)"
 echo " 11) Gemma 4 E2B  [LM Studio]                 2.3B effective params (~3.4 GB)"
+echo " 12) Qwen3.8-27B (Unsloth)                    27B params, dense (~17.6 GB)"
+echo " 13) Qwen3.8-2B-Distill                       2B params, dense (~2.1 GB)"
 echo ""
 read -rp "Model [6]: " MODEL_CHOICE
 echo ""
@@ -441,6 +443,88 @@ case "${MODEL_CHOICE:-6}" in
     MODEL_PATH="$LMS_MODELS/lmstudio-community/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf"
     CTX_SIZE="16384"
     ;;
+  12)
+    # Qwen3.8-27B, packaged by unsloth's new "Dynamic v3.0" quant method —
+    # fetched by ./download-model.sh (option 12, same number there), NOT
+    # served out of LM Studio's tree like option 10 above. Same underlying
+    # model and architecture as option 10 (general.architecture "qwen35":
+    # hybrid attention/SSM, 27B dense FFNs, native 262144 context — see that
+    # option's comments for the full architecture breakdown, which all
+    # applies here unchanged), but a different repo, a different quantizer,
+    # and — critically — actually working.
+    #
+    # WHY THIS ENTRY EXISTS: option 10's model, when first fetched through LM
+    # Studio, generated nothing but endless "?????" on every response. That
+    # is the classic symptom of a tokenizer/detokenizer mismatch — the engine
+    # can't decode what the model is emitting and falls back to an
+    # unknown-token placeholder — and it points at LM Studio's bundled
+    # llama.cpp runtime rather than at the GGUF itself: Dynamic v3.0 is quant
+    # tooling recent enough that a runtime which predates it is a real
+    # candidate. Fetching this repo's own quant independently and serving it
+    # through this project's own pinned, tested Vulkan build sidesteps that
+    # runtime entirely. NOT independently confirmed root-cause (no visibility
+    # into LM Studio's internals) — treat the first launch of this entry as
+    # the actual test, and see download-model.sh option 12 for the file
+    # selection reasoning.
+    #
+    # SPEC — deliberately left "off" (the default), unlike option 10. This
+    # repo ships its MTP head as a SEPARATE file (MTP/mtp-Qwen3.8-27B-Q4_0.gguf)
+    # rather than embedding the blk.64.nextn.* tensors in the main quant, and
+    # that file is not fetched here (see download-model.sh option 12) — so
+    # unlike option 10 there is no MTP head loaded for --spec-type draft-mtp
+    # to use. SPEC=draft-mtp would simply find nothing to draft with.
+    #
+    # REASONING_EFFORTS — assumed identical to option 10's ('low medium
+    # xhigh', no 'high'): the chat template is embedded from the original
+    # model repo's tokenizer_config.json and carried through by whichever
+    # tool converts to GGUF, so a different quantizer packaging the same base
+    # model should not change it. Not verified against this specific file
+    # (that needs the file downloaded and run, which is left to you — see the
+    # apply-template check in README.md § Reasoning). If it turns out wrong,
+    # the effect is limited to a silently-ignored kwarg — see the note by
+    # REASONING_EFFORTS's declaration above the menu.
+    REASONING_EFFORTS="low medium xhigh"
+    #
+    # CTX_SIZE matches option 10 rather than using the extra headroom this
+    # quant's cheaper KV cache and the 24 GB budget would allow — kept equal
+    # for now so the two Qwen3.8-27B entries stay directly comparable.
+    MODEL_PATH="$LLAMA_MODELS/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+    CTX_SIZE="16384"
+    ;;
+  13)
+    # Qwen3.8-2B-Distill (empero-ai): 2B params, dense, distilled from the
+    # same Qwen3.8 teacher line as options 10/12, but on the newer Qwen3.5
+    # architecture -- a hybrid of full-attention layers and Gated DeltaNet
+    # layers (three Gated DeltaNet layers per full-attention layer, per the
+    # model card). It is a reasoning model: every response opens with a
+    # <think> block. Fetched by ./download-model.sh option 13 -- see that
+    # entry for why Q8_0 was the file chosen over the repo's K-quants.
+    #
+    # CAUTION - ARCHITECTURE SUPPORT, untested against this project's pin.
+    # The model card requires "a recent llama.cpp build with Qwen3.5 / Gated
+    # DeltaNet support" and warns older builds fail to load it outright. This
+    # project pins LLAMA_TAG=b10355; that pin was NOT confirmed to include
+    # Qwen3.5/Gated DeltaNet support when this entry was added. If the server
+    # errors on load ("unknown architecture" or similar), try a newer build:
+    #   LLAMA_TAG=<latest tag> ./setup-with-vulkan.sh
+    # (see README.md's Pinned llama.cpp Version section) before assuming the
+    # download itself is bad.
+    #
+    # REASONING_EFFORTS left unset (thinking on/off only): the model card
+    # documents a <think> block but does not describe a reasoning_effort
+    # variable or named levels the way options 10/12's template does, and
+    # this was not independently confirmed against the GGUF's own template
+    # (see the Reasoning Mode block below for how to check that from a
+    # running server). Treat "on" as this model's only thinking mode for now.
+    #
+    # CTX_SIZE kept at 16384 to match every other entry in this menu, though
+    # at 2B params there would be ample memory headroom to go higher -- the
+    # model card's own usage examples use 16384, and nothing here confirms a
+    # larger trained context, so this stays a documented value rather than a
+    # guess.
+    MODEL_PATH="$LLAMA_MODELS/Qwen3.8-2B-Q8_0.gguf"
+    CTX_SIZE="16384"
+    ;;
   *)
     echo "ERROR: Invalid selection '$MODEL_CHOICE'."
     exit 1
@@ -473,11 +557,13 @@ esac
 #     template prepends a sentence of instruction to the system message. So a
 #     level is a request the model can ignore, unlike off, which it cannot.
 #
-# WHICH MODELS HAVE LEVELS. Only option 10 (Qwen3.8-27B), whose levels are
-# 'low', 'medium', 'xhigh' — note there is no 'high', and that its `medium`
-# injects no instruction at all, being the un-nudged baseline. Every other model
-# in this menu ships a template with `enable_thinking` and nothing else (Muse
-# Glimmer, option 9, has neither). Don't take that on faith when adding a model —
+# WHICH MODELS HAVE LEVELS. Only options 10 and 12 (both Qwen3.8-27B, from
+# different sources — see start-server.sh's comments on option 12 for why
+# there are two), whose levels are 'low', 'medium', 'xhigh' — note there is
+# no 'high', and that their `medium` injects no instruction at all, being the
+# un-nudged baseline. Every other model in this menu ships a template with
+# `enable_thinking` and nothing else (Muse Glimmer, option 9, has neither).
+# Don't take that on faith when adding a model —
 # read it out of the GGUF, since this is a property of the file, not of the
 # model family. The template is metadata, so a quick way to see it rendered is
 # to make the *small* model wear the big one's template and ask the server what
@@ -513,7 +599,7 @@ if [[ -z "$REASONING_CHOICE" ]]; then
   else
     echo ""
     echo "     This model's chat template knows thinking on/off only; it has no"
-    echo "     effort levels. (Option 10 is the one that does.)"
+    echo "     effort levels. (Options 10 and 12 are the ones that do.)"
   fi
   echo ""
   read -rp "Reasoning [1]: " REASONING_INPUT

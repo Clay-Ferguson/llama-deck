@@ -224,6 +224,8 @@ Several model variants are supported:
 | **Muse Glimmer 30B** | 29.6B (dense) | K-quant (kquant-17gb) | ~16.8 GB | 16384 | Dense, not MoE — expect ~5-8 tok/s per the project's bandwidth math, well under the MoE models above. Repo ships **only K-quants**, no IQ-quant fallback, so it is **unverified against the Arc 140V k-quant crash** |
 | **Qwen3.8-27B** | 27B, dense FFN (hybrid SSM/attention) | Q4_K_M | ~16.8 GB | 16384 | **Served from LM Studio's folder**, not downloaded by this project. A K-quant with no IQ fallback, so it carried the Arc 140V k-quant crash risk — but it **runs fine on Vulkan** (confirmed 2026-08-14), useful evidence that the bug doesn't hit every K-quant. Architecture `qwen35`: of 65 blocks only 16 are attention, 48 are Mamba-style SSM, and block 64 is an MTP head — so it runs [speculative decoding](#speculative-decoding) for free, but the dense FFNs still put it at ~5-8 tok/s rather than MoE speed. KV cache is unusually cheap (~64 KiB/token, so 16384 ctx ≈ 1 GiB) since only 16 layers hold one. LM Studio reports ~17.7 GB because that figure includes the 0.93 GB mmproj; only the 16.8 GB of weights get loaded |
 | **Gemma 4 E2B** *(LM Studio copy)* | 2.3B effective (5.1B total) | Q4_K_M | ~3.4 GB | 16384 | **Same model as the Gemma 4 E2B row above**, packaged by `lmstudio-community` instead of `unsloth` — a separate conversion, ~320 MB larger, so output won't match byte-for-byte. Kept alongside option 1 for packager comparison; the most redundant model on the menu if you need disk back |
+| **Qwen3.8-27B** *(unsloth Dynamic v3.0)* | 27B, dense FFN (hybrid SSM/attention) | UD-Q4_K_XL | ~17.6 GB | 16384 | **Fetched by `./download-model.sh`** (option 12 in both scripts), unlike the row above — this is [unsloth's own repo](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF), quantized with their newer "Dynamic v3.0" method. Same `qwen35` hybrid architecture as the LM Studio row above. Added because the LM Studio download of that same base model produced endless `?????` output — a classic tokenizer/detokenizer mismatch, most likely LM Studio's bundled runtime predating this quant tooling — so this repo is fetched and served independently through this project's own pinned llama.cpp build instead. Unlike the LM Studio copy, this repo ships its MTP head as a **separate** file that isn't fetched here, so `SPEC` stays `off` rather than `draft-mtp` |
+| **Qwen3.8-2B-Distill** | 2B (dense, Qwen3.5 hybrid attention/Gated-DeltaNet) | Q8_0 | ~2.1 GB | 16384 | [empero-ai](https://huggingface.co/empero-ai/Qwen3.8-2B-Distill-GGUF) distillation of the Qwen3.8 teacher line down to a 2B student, on the newer Qwen3.5 architecture (full-attention layers interleaved with Gated DeltaNet layers). Reasoning model — every response opens with a `<think>` block. Tiny enough that the 24 GB budget is a non-issue; `Q8_0` was picked over the repo's `Q4_K_M`/`Q5_K_M`/`Q6_K` specifically to dodge the Arc 140V K-quant crash, since this repo has no IQ-quant to fall back on. **Caution:** the model card requires "a recent llama.cpp build with Qwen3.5 / Gated DeltaNet support" and warns older builds won't load it at all — untested against this project's pinned `LLAMA_TAG`; try a newer pin if it fails to load (see [Pinned llama.cpp Version](#pinned-llamacpp-version)) |
 
 You don't edit anything to switch between them. `./start-server.sh` opens with a
 numbered menu and serves whichever you pick:
@@ -242,6 +244,8 @@ numbered menu and serves whichever you pick:
   9) Muse Glimmer 30B     29.6B params, dense (~16.8 GB)
  10) Qwen3.8-27B  [LM Studio]  27B params, dense (~16.8 GB)
  11) Gemma 4 E2B  [LM Studio]  2.3B effective params (~3.4 GB)
+ 12) Qwen3.8-27B (Unsloth)     27B params, dense (~17.6 GB)
+ 13) Qwen3.8-2B-Distill        2B params, dense (~2.1 GB)
 
 Model [6]:
 ```
@@ -317,13 +321,14 @@ below it in `start-server.sh`. Each branch sets `CTX_SIZE`, and may override `FA
 (speculative decoding, `--spec-type`) and `REASONING_EFFORTS` (which named
 thinking levels its template implements); branches that omit those fall back to
 the defaults declared above the menu (`FA="on"`, `BATCH=""`, `SPEC="off"`,
-`REASONING_EFFORTS=""`). Two branches override something today:
+`REASONING_EFFORTS=""`). Three branches override something today:
 
 | Model | Override | Why |
 |-------|----------|-----|
 | Qwen3.6-35B-A3B (choices 6, 7, 8) | `BATCH="256"` | Arc 140V prefill workaround for A3B MoE on Vulkan |
 | Qwen3.8-27B (choice 10) | `SPEC="draft-mtp"` | Dense model with a built-in MTP head — see [Speculative Decoding](#speculative-decoding) |
-| Qwen3.8-27B (choice 10) | `REASONING_EFFORTS="low medium xhigh"` | The only model here whose template has graduated thinking levels — see [Reasoning](#reasoning) |
+| Qwen3.8-27B (choice 10) | `REASONING_EFFORTS="low medium xhigh"` | The only models here whose template has graduated thinking levels — see [Reasoning](#reasoning) |
+| Qwen3.8-27B, unsloth (choice 12) | `REASONING_EFFORTS="low medium xhigh"` | Same template/levels as choice 10 — see [Reasoning](#reasoning). `SPEC` stays `off`: this repo ships its MTP head as a separate file that isn't fetched, so there is no draft head to use |
 
 Every model runs with flash-attention on.
 
@@ -383,6 +388,16 @@ keeping the numbering aligned between them (see `ai-prompts/`).
 > **only K-quants** — there is no IQ-quant to fall back to the way choices 6 and
 > 7 use IQ4_XS to dodge the Arc 140V k-quant crash, so this one is genuinely
 > unverified against that bug and has no in-repo fallback if it hits it.
+>
+> **Choice 13 (Qwen3.8-2B-Distill) is untested against a different problem: the
+> architecture itself, not a quant.** It's on the newer Qwen3.5 architecture — a
+> hybrid of full-attention and Gated DeltaNet layers — and its model card states
+> plainly that a recent llama.cpp build with Qwen3.5 / Gated DeltaNet support is
+> required, with older builds failing to load it outright. Whether this
+> project's pinned `LLAMA_TAG` (see [Pinned llama.cpp Version](#pinned-llamacpp-version))
+> is new enough was not confirmed when this entry was added. If the server
+> errors on load instead of merely running slowly, that's the first thing to
+> suspect — try a newer `LLAMA_TAG` before assuming the download is bad.
 
 ## Vulkan Driver
 
@@ -620,8 +635,10 @@ do. What it offers depends on the model you just picked:
 ```
 
 Entries **3-5 appear only for models that actually implement effort levels** —
-today that is **Qwen3.8-27B (choice 10) alone**. Every other model in the menu
-shows just 1 and 2, with a line saying so. The numbering is stable either way, so
+today that is **Qwen3.8-27B, choices 10 and 12** (the LM Studio copy and the
+unsloth one — same base model and template, so the same levels). Every other
+model in the menu shows just 1 and 2, with a line saying so. The numbering is
+stable either way, so
 `REASONING=low` keeps its meaning when you switch models; ask a model for a level
 it doesn't have and you get a note plus plain "on", not a failure.
 
@@ -634,7 +651,7 @@ guaranteed and the other is a request:
 | **On** | `--reasoning on` | Thinking at whatever depth the model does by default |
 | **Low / Medium / High** | `--chat-template-kwargs '{"reasoning_effort":"..."}'` | **Not a llama.cpp feature** — there is no reasoning-level flag; `--reasoning` takes only `on`/`off`/`auto`. The levels live in the *model's own chat template*, reached through the generic kwargs escape hatch. The template prepends a sentence of instruction to the system message, so the effect is prompting, and the model may ignore it |
 
-Qwen3.8-27B's levels are literally `low`, `medium`, `xhigh` — **there is no
+Qwen3.8-27B's levels (choices 10 and 12) are literally `low`, `medium`, `xhigh` — **there is no
 `high`** (the menu's "High" sends `xhigh`), and `xhigh` is also what "On" gives
 you, being the template's default. Its `medium` deliberately injects *no*
 instruction and is the un-nudged baseline.
@@ -722,6 +739,13 @@ Choice 10 is set up for this in the script: the model ships its own MTP
 `blk.64.nextn.*` tensors already inside the 16.8 GB of weights — so
 `SPEC="draft-mtp"` needs no draft model and no extra download. It drafts with a
 head that is loaded either way.
+
+Choice 12 is the same architecture and just as "dense" by this argument, but
+its `SPEC` is left `off`: that repo (unsloth) ships the MTP head as a separate
+`MTP/mtp-*.gguf` file rather than embedding it in the main quant, and that file
+isn't fetched by `download-model.sh` option 12. Fetching it separately and
+passing `--mtp-path` (or equivalent) would be the way to enable it there —
+not done here, per the same "basic model only" scope as skipping vision.
 
 Two things to keep in mind:
 
